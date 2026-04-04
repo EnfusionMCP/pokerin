@@ -1,0 +1,10 @@
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+.git
+.venv
+*.egg-info
+deploy/setup-vps.sh
+frontend/node_modules

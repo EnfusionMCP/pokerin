@@ -1,0 +1,20 @@
+pokerin.space {
+	reverse_proxy app:8080
+
+	# WebSocket — Caddy handles this automatically, but be explicit
+	# about timeouts so idle poker connections don't get killed
+	reverse_proxy /ws/* app:8080 {
+		flush_interval -1
+		transport http {
+			keepalive 30s
+			keepalive_idle_conns 100
+		}
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 50MiB
+			roll_keep 3
+		}
+	}
+}
