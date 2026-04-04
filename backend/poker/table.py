@@ -56,6 +56,9 @@ class PokerTable:
         self.conn = conn_manager
         self._bank = bank  # BankService for DB balance operations
 
+        # Lock for seat mutations (sit_down, stand_up, add_chips)
+        self._seat_lock = asyncio.Lock()
+
         # Seats
         self.seats: list[Optional[PlayerSeat]] = [None] * config.max_seats
 
@@ -78,6 +81,8 @@ class PokerTable:
         self._shutdown = asyncio.Event()
         # Track disconnected user IDs for cleanup between hands (BUG B fix)
         self._disconnected_users: set[int] = set()
+        # Bot user IDs — these are never cleaned up by _cleanup_disconnected
+        self._bot_users: set[int] = set()
 
         # Rake
         self._rake = RakeCalculator(config.rake_percent, config.rake_cap)
@@ -94,7 +99,7 @@ class PokerTable:
         """Main loop: wait for players, deal hands."""
         log.info("Table %s (%s) started", self.table_id, self.config.name)
         while not self._shutdown.is_set():
-            self._cleanup_disconnected()
+            await self._cleanup_disconnected()
             active = self._active_player_count()
             if active < MIN_PLAYERS:
                 self.phase = HandPhase.IDLE
@@ -113,6 +118,7 @@ class PokerTable:
     async def _play_hand(self) -> None:
         """Play a single hand from deal to showdown."""
         self.hand_number += 1
+        log.info("=== HAND #%d START on %s ===", self.hand_number, self.table_id)
         self.phase = HandPhase.POSTING
         self._hand_actions = []
         self._action_order = 0
@@ -120,6 +126,13 @@ class PokerTable:
 
         # Prepare
         self._reset_hand()
+
+        # Re-check after reset — a player may have stood up between the
+        # count check in run() and now (TOCTOU race)
+        if self._active_player_count() < MIN_PLAYERS:
+            self.phase = HandPhase.IDLE
+            return
+
         self.deck.shuffle()
         self._advance_dealer()
         self._post_blinds()
@@ -129,19 +142,34 @@ class PokerTable:
         for seat in self.seats:
             if seat and seat.is_in_hand:
                 starting_stacks[seat.seat] = seat.stack + seat.total_bet
+        log.info("Hand #%d: dealer=seat%d, players=%s",
+                 self.hand_number, self.dealer_seat,
+                 [(s.seat, s.character_name, s.status.value, s.stack, s.current_bet)
+                  for s in self.seats if s and s.is_in_hand])
 
-        # Notify all players
+        # Notify all players (include blind pot + seat data so UI updates immediately)
+        blind_pot = sum(p.amount for p in self._calculate_current_pots())
+        seats_data = []
+        for i, seat in enumerate(self.seats):
+            if seat is None:
+                seats_data.append({"seat": i, "status": "empty"})
+            else:
+                seats_data.append(seat.to_public_dict())
+
         await self._broadcast({
             "type": ServerMsg.HAND_START,
             "hand_num": self.hand_number,
             "seed_hash": self.deck.seed_hash,
             "dealer": self.dealer_seat,
+            "pot": blind_pot,
+            "seats": seats_data,
         })
 
         # Deal hole cards
         self.phase = HandPhase.DEALING
         self._deal_hole_cards()
         await self._send_hole_cards()
+        await asyncio.sleep(1.5)  # pause after dealing so players can see their cards
 
         # Betting rounds
         for street in (Street.PREFLOP, Street.FLOP, Street.TURN, Street.RIVER):
@@ -150,6 +178,7 @@ class PokerTable:
             if street != Street.PREFLOP:
                 self._deal_community(street)
                 await self._broadcast_community(street)
+                await asyncio.sleep(1.0)  # pause after community cards appear
                 if street == Street.FLOP:
                     self.saw_flop = True
 
@@ -168,6 +197,10 @@ class PokerTable:
 
         # Showdown and distribute
         self.phase = HandPhase.SHOWDOWN
+        in_hand_final = [(s.seat, s.character_name, s.status.value) for s in self.seats if s and s.is_in_hand]
+        log.info("[%s] Hand #%d SHOWDOWN: remaining=%s community=%s",
+                 self.table_id, self.hand_number, in_hand_final,
+                 [str(c) for c in self.community])
         result = self._resolve_showdown()
         await self._broadcast_result(result)
 
@@ -175,6 +208,13 @@ class PokerTable:
         await self._persist_hand(result, starting_stacks, hand_started)
 
         self.phase = HandPhase.COMPLETE
+
+        # Clear all current bets so stale data doesn't show between hands
+        for seat in self.seats:
+            if seat:
+                seat.current_bet = 0
+        self.pots = []
+
         await asyncio.sleep(3.0)  # pause for players to see the result
 
     # ------------------------------------------------------------------
@@ -189,6 +229,9 @@ class PokerTable:
         for seat in self.seats:
             if seat is None:
                 continue
+            # Always clear stale bet data regardless of status
+            seat.current_bet = 0
+            seat.total_bet = 0
             # BUG B fix: disconnected players don't get dealt into next hand
             if seat.user_id in self._disconnected_users:
                 seat.status = SeatStatus.SITTING_OUT
@@ -199,17 +242,26 @@ class PokerTable:
                 else:
                     seat.status = SeatStatus.SITTING_OUT
 
-    def _cleanup_disconnected(self) -> None:
-        """Remove disconnected players who aren't in a hand."""
+    async def _cleanup_disconnected(self) -> None:
+        """Remove disconnected players who aren't in a hand. Credits stack to bank."""
         if self.phase not in (HandPhase.IDLE, HandPhase.COMPLETE):
             return
         connected = self.conn.get_connected_users(self.table_id)
         for i, seat in enumerate(self.seats):
             if seat and seat.status == SeatStatus.SITTING_OUT:
+                if seat.user_id in self._bot_users:
+                    continue  # bots don't need WS connections
                 if seat.user_id not in connected:
                     uid = seat.user_id
+                    # Credit remaining stack back to bank before removing
+                    if seat.stack > 0 and self._bank:
+                        try:
+                            await self._bank.credit(uid, seat.stack, tx_type="cashout",
+                                                     reference_id=f"table:{self.table_id}:disconnect")
+                            log.info("Credited %d to user %d on disconnect cleanup", seat.stack, uid)
+                        except Exception as e:
+                            log.error("Failed to credit disconnect stack: user=%d amount=%d: %s", uid, seat.stack, e)
                     self.seats[i] = None
-                    # Bug 7 fix: clean up per-player queue and disconnect tracking
                     self._action_queues.pop(uid, None)
                     self._disconnected_users.discard(uid)
 
@@ -307,7 +359,12 @@ class PokerTable:
         """Run a single betting round, collecting actions from players."""
         active = [s for s in self.seats if s and s.is_active]
         if len(active) <= 1:
+            log.info("[%s] %s: skipping betting, only %d active",
+                     self.table_id, self.street.value, len(active))
             return
+        log.info("[%s] === %s BETTING === active=%s, current_bet=%d",
+                 self.table_id, self.street.value.upper(),
+                 [(s.seat, s.character_name) for s in active], self.current_bet)
 
         # BUG 1 fix: only reset per-street state on postflop streets.
         # Preflop, blinds are already posted — preserve current_bet on players.
@@ -339,6 +396,14 @@ class PokerTable:
                 continue
 
             valid = self._get_valid_actions(seat)
+
+            # Broadcast who's acting so all clients can show the timer
+            await self._broadcast({
+                "type": "action_on",
+                "seat": self.action_on,
+                "timeout": ACTION_TIMEOUT,
+            })
+
             await self.conn.send_to_player(self.table_id, seat.user_id, {
                 "type": ServerMsg.ACTION_PROMPT,
                 "valid": [a.value for a in valid],
@@ -349,7 +414,28 @@ class PokerTable:
             })
 
             # Wait for action (or timeout → auto-fold)
+            log.info("[%s] %s: waiting for seat%d (%s) | cur_bet=%d seat_bet=%d stack=%d",
+                     self.table_id, self.street.value, seat.seat, seat.character_name,
+                     self.current_bet, seat.current_bet, seat.stack)
             action = await self._wait_for_action(seat.user_id)
+
+            # Validate action against legal moves — coerce invalid actions
+            valid_set = {a.value for a in valid}
+            if action.action.value not in valid_set and action.action != ActionType.ALL_IN:
+                to_call = self.current_bet - seat.current_bet
+                if to_call > 0 and action.action == ActionType.CHECK:
+                    # Can't check when facing a bet — fold instead
+                    log.warning("[%s] seat%d sent CHECK facing bet=%d, forcing FOLD",
+                                self.table_id, seat.seat, to_call)
+                    action = PlayerAction(action=ActionType.FOLD, user_id=seat.user_id)
+                elif action.action in (ActionType.BET, ActionType.RAISE) and ActionType.RAISE not in valid and ActionType.BET not in valid:
+                    log.warning("[%s] seat%d sent invalid %s, forcing FOLD",
+                                self.table_id, seat.seat, action.action.value)
+                    action = PlayerAction(action=ActionType.FOLD, user_id=seat.user_id)
+
+            log.info("[%s] %s: seat%d (%s) -> %s amount=%d",
+                     self.table_id, self.street.value, seat.seat, seat.character_name,
+                     action.action.value, action.amount)
             self._apply_action(seat, action)
 
             # Record for hand history
@@ -363,7 +449,12 @@ class PokerTable:
             })
             self._action_order += 1
 
-            # Broadcast the action
+            # Advance to next player first so we can broadcast who's next
+            more_action = self._advance_action()
+            log.info("[%s] %s: advance -> more_action=%s, action_on=seat%d",
+                     self.table_id, self.street.value, more_action, self.action_on)
+
+            # Broadcast the action + who's next
             await self._broadcast({
                 "type": ServerMsg.PLAYER_ACTION,
                 "seat": seat.seat,
@@ -371,10 +462,12 @@ class PokerTable:
                 "action": action.action.value,
                 "amount": action.amount,
                 "stack": seat.stack,
+                "current_bet": seat.current_bet,
                 "pot": sum(p.amount for p in self._calculate_current_pots()),
+                "action_on": self.action_on if more_action else -1,
             })
 
-            if not self._advance_action():
+            if not more_action:
                 break
 
     def _preflop_first_actor(self) -> int:
@@ -421,10 +514,23 @@ class PokerTable:
             queue = asyncio.Queue()
             self._action_queues[user_id] = queue
 
+        # Drain any stale actions left in the queue from previous turns
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
         try:
             action = await asyncio.wait_for(queue.get(), timeout=ACTION_TIMEOUT)
             return action
         except asyncio.TimeoutError:
+            # Auto-check if free, otherwise fold
+            seat = next((s for s in self.seats if s and s.user_id == user_id), None)
+            if seat and self.current_bet <= seat.current_bet:
+                log.info("Player %d timed out — auto-check", user_id)
+                return PlayerAction(action=ActionType.CHECK, user_id=user_id)
+            log.info("Player %d timed out — auto-fold", user_id)
             return PlayerAction(action=ActionType.FOLD, user_id=user_id)
 
     def _apply_action(self, seat: PlayerSeat, action: PlayerAction) -> None:
@@ -457,9 +563,10 @@ class PokerTable:
                 if new_bet > self.current_bet:
                     raise_inc = new_bet - self.current_bet
                     if raise_inc >= self.min_raise:
+                        # Full raise — reopens action
                         self.min_raise = raise_inc
+                        self.last_raiser = seat.seat
                     self.current_bet = new_bet
-                    self.last_raiser = seat.seat
                 seat.status = SeatStatus.ALL_IN
             else:
                 # Normal raise
@@ -479,9 +586,10 @@ class PokerTable:
             if seat.current_bet > self.current_bet:
                 raise_inc = seat.current_bet - self.current_bet
                 if raise_inc >= self.min_raise:
+                    # Full raise — reopens action
                     self.min_raise = raise_inc
+                    self.last_raiser = seat.seat
                 self.current_bet = seat.current_bet
-                self.last_raiser = seat.seat
             seat.status = SeatStatus.ALL_IN
             seat.has_acted = True
 
@@ -498,25 +606,33 @@ class PokerTable:
         if len(active) <= 1:
             return False
 
-        # Find next active player after current
         seat_indices = [s.seat for s in active]
-        try:
-            cur_idx = seat_indices.index(self.action_on)
-        except ValueError:
-            return False
 
-        next_idx = (cur_idx + 1) % len(seat_indices)
+        # Find current position — if the actor just folded/went all-in,
+        # they won't be in the active list. Find the next active seat
+        # after self.action_on by seat number.
+        if self.action_on in seat_indices:
+            cur_idx = seat_indices.index(self.action_on)
+            next_idx = (cur_idx + 1) % len(seat_indices)
+        else:
+            # Actor left the active list (fold/all-in). Find the first
+            # active seat whose seat number comes after action_on.
+            next_idx = 0
+            for i, sn in enumerate(seat_indices):
+                if sn > self.action_on:
+                    next_idx = i
+                    break
+
         next_seat_num = seat_indices[next_idx]
         next_seat = self.seats[next_seat_num]
 
         # Round is complete when all active players have acted and matched
-        if next_seat.has_acted and next_seat.current_bet == self.current_bet:
-            all_matched = all(
-                s.current_bet == self.current_bet and s.has_acted
-                for s in active
-            )
-            if all_matched:
-                return False
+        all_matched = all(
+            s.current_bet == self.current_bet and s.has_acted
+            for s in active
+        )
+        if all_matched:
+            return False
 
         self.action_on = next_seat_num
         return True
@@ -643,12 +759,16 @@ class PokerTable:
         }
 
     async def _broadcast_result(self, result: dict) -> None:
-        """Broadcast hand result to all players."""
-        await self._broadcast({
+        """Broadcast hand result to all players (rake excluded — house info)."""
+        broadcast = {
             "type": ServerMsg.HAND_RESULT,
             "community": [str(c) for c in self.community],
-            **result,
-        })
+            "winners": result["winners"],
+            "shown_cards": result["shown_cards"],
+            "pots": result["pots"],
+            "server_seed": result["server_seed"],
+        }
+        await self._broadcast(broadcast)
 
     async def _persist_hand(
         self, result: dict, starting_stacks: dict[int, int], hand_started: float
@@ -721,6 +841,13 @@ class PokerTable:
         seat: int, buyin: int,
     ) -> None:
         """Seat a player at the table."""
+        async with self._seat_lock:
+            await self._sit_down_inner(user_id, character_id, character_name, seat, buyin)
+
+    async def _sit_down_inner(
+        self, user_id: int, character_id: int, character_name: str,
+        seat: int, buyin: int,
+    ) -> None:
         if seat < 0 or seat >= self.config.max_seats:
             await self.conn.send_to_player(self.table_id, user_id, {
                 "type": ServerMsg.ERROR, "message": "Invalid seat number",
@@ -782,12 +909,23 @@ class PokerTable:
 
     async def stand_up(self, user_id: int) -> None:
         """Remove a player from the table."""
+        async with self._seat_lock:
+            await self._stand_up_inner(user_id)
+
+    async def _stand_up_inner(self, user_id: int) -> None:
         for i, seat in enumerate(self.seats):
             if seat and seat.user_id == user_id:
-                # Bug 6 fix: can't leave while active or all-in mid-hand
-                if seat.is_in_hand and self.phase == HandPhase.BETTING:
-                    # Queue for removal after hand ends
+                # Mid-hand: fold and queue for removal after hand ends
+                if seat.is_in_hand and self.phase not in (HandPhase.IDLE, HandPhase.COMPLETE):
                     self._disconnected_users.add(user_id)
+                    # Inject fold so _wait_for_action unblocks immediately
+                    if seat.is_active:
+                        seat.status = SeatStatus.FOLDED
+                        queue = self._action_queues.get(user_id)
+                        if queue is None:
+                            queue = asyncio.Queue()
+                            self._action_queues[user_id] = queue
+                        await queue.put(PlayerAction(action=ActionType.FOLD, user_id=user_id))
                     return
 
                 # Credit remaining stack back to DB balance
@@ -817,7 +955,7 @@ class PokerTable:
         action_str = raw.get("action", "fold")
         # BUG 18 fix: coerce amount to int, default 0
         try:
-            amount = int(raw.get("amount", 0))
+            amount = max(0, int(raw.get("amount", 0)))
         except (TypeError, ValueError):
             amount = 0
 
@@ -838,27 +976,30 @@ class PokerTable:
         """Handle a player disconnecting.
 
         Tracks user as disconnected so _reset_hand won't deal them in.
-        If mid-hand, marks FOLDED so bets stay in the pot.
+        Does NOT immediately fold mid-hand — the 30s action timeout handles
+        that. This gives players a chance to reconnect after brief network
+        hiccups without losing their hand.
         """
         self._disconnected_users.add(user_id)
         for seat in self.seats:
             if seat and seat.user_id == user_id:
-                if seat.is_in_hand:
-                    seat.status = SeatStatus.FOLDED
-                    # Bug 3 fix: push fold to their queue so _wait_for_action
-                    # unblocks immediately instead of waiting 30s
-                    queue = self._action_queues.get(user_id)
-                    if queue is None:
-                        queue = asyncio.Queue()
-                        self._action_queues[user_id] = queue
-                    await queue.put(PlayerAction(action=ActionType.FOLD, user_id=user_id))
-                else:
+                if not seat.is_in_hand:
                     seat.status = SeatStatus.SITTING_OUT
                 log.info("Player %d disconnected from table %s", user_id, self.table_id)
                 return
 
+    def handle_reconnect(self, user_id: int) -> None:
+        """Clear disconnect flag when a player reconnects mid-hand."""
+        self._disconnected_users.discard(user_id)
+
     async def add_chips(self, user_id: int, amount: int) -> None:
         """Top up a player's stack between hands."""
+        async with self._seat_lock:
+            await self._add_chips_inner(user_id, amount)
+
+    async def _add_chips_inner(self, user_id: int, amount: int) -> None:
+        if amount <= 0:
+            return
         for seat in self.seats:
             if seat and seat.user_id == user_id:
                 if self.phase not in (HandPhase.IDLE, HandPhase.COMPLETE):

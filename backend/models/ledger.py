@@ -31,7 +31,7 @@ class Transaction(Base):
     reference_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # ESI journal ref ID for deposit verification (indexed for dedup lookups)
-    esi_ref_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    esi_ref_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, unique=True, index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

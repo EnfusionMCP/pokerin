@@ -1,0 +1,217 @@
+@import "tailwindcss";
+
+@theme {
+  --color-felt: #0d5c2e;
+  --color-felt-dark: #0a4a24;
+  --color-felt-light: #11703a;
+  --color-gold: #c9a84c;
+  --color-gold-light: #e8d48b;
+  --color-gold-dim: rgba(201, 168, 76, 0.15);
+  --color-panel: #1a1a2e;
+  --color-panel-light: #252540;
+  --color-surface: #0f0f1a;
+  --color-surface-raised: #13132a;
+  --color-danger: #dc2626;
+  --color-success: #16a34a;
+
+  --font-display: 'Rajdhani', system-ui, sans-serif;
+  --font-mono: 'Space Mono', 'Consolas', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Barlow', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: var(--color-surface);
+  color: #e5e5e5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(201, 168, 76, 0.2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(201, 168, 76, 0.35);
+}
+
+/* Range input styling — gold accent */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  height: 20px;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, rgba(201, 168, 76, 0.3), rgba(201, 168, 76, 0.15));
+  height: 4px;
+  border-radius: 2px;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-gold);
+  border: 2px solid rgba(0, 0, 0, 0.3);
+  margin-top: -6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, rgba(201, 168, 76, 0.3), rgba(201, 168, 76, 0.15));
+  height: 4px;
+  border-radius: 2px;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-gold);
+  border: 2px solid rgba(0, 0, 0, 0.3);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* Checkbox styling */
+input[type="checkbox"] {
+  accent-color: var(--color-gold);
+}
+
+/* Toast slide-in */
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in {
+  animation: slide-in 0.2s ease-out;
+}
+
+/* Card deal-in */
+@keyframes deal-in {
+  from { opacity: 0; transform: translateY(-20px) scale(0.8); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-deal-in {
+  animation: deal-in 0.3s ease-out both;
+}
+
+/* Action badge fade */
+@keyframes badge-life {
+  0% { opacity: 0; transform: translateY(4px); }
+  8% { opacity: 1; transform: translateY(0); }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.animate-badge {
+  animation: badge-life 3.2s ease-out both;
+}
+
+/* Seat pulse glow for active player */
+@keyframes seat-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(201, 168, 76, 0.4); }
+  50% { box-shadow: 0 0 20px rgba(201, 168, 76, 0.7), 0 0 40px rgba(201, 168, 76, 0.2); }
+}
+.animate-seat-pulse {
+  animation: seat-pulse 1.5s ease-in-out infinite;
+}
+
+/* Sit dialog slide-up */
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-up {
+  animation: slide-up 0.25s ease-out;
+}
+
+/* Backdrop fade */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Slide in from left */
+@keyframes slide-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+.animate-slide-in-left {
+  animation: slide-in-left 0.25s ease-out;
+}
+
+/* Bet chip appear */
+@keyframes bet-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.animate-bet-in {
+  animation: bet-in 0.2s ease-out;
+}
+
+/* Bet chip collection */
+@keyframes bet-collect {
+  from { opacity: 1; }
+  to { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+}
+.animate-bet-collect {
+  animation: bet-collect 0.35s ease-in forwards;
+}
+
+/* Showdown profit float-up */
+@keyframes profit-float {
+  0% { opacity: 0; transform: translateY(0); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-20px); }
+}
+.animate-profit-float {
+  animation: profit-float 2.5s ease-out forwards;
+}
+
+/* Community card slide-in */
+@keyframes card-slide-in {
+  from { opacity: 0; transform: translateX(-15px) scale(0.9); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+.animate-card-slide-in {
+  animation: card-slide-in 0.3s ease-out both;
+}
+
+/* Subtle glow pulse for gold elements */
+@keyframes gold-glow {
+  0%, 100% { text-shadow: 0 0 8px rgba(201, 168, 76, 0.3); }
+  50% { text-shadow: 0 0 16px rgba(201, 168, 76, 0.5), 0 0 30px rgba(201, 168, 76, 0.15); }
+}
+
+/* Staggered fade-in for lists */
+@keyframes stagger-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-stagger-in {
+  animation: stagger-in 0.3s ease-out both;
+}
+
+/* Spinner */
+@keyframes spin-gold {
+  to { transform: rotate(360deg); }
+}

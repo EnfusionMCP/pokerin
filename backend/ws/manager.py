@@ -38,8 +38,8 @@ class ConnectionManager:
         log.debug("Connected: table=%s user=%d (total=%d)",
                   table_id, user_id, len(self._tables[table_id]))
 
-    async def disconnect(self, table_id: str, user_id: int, ws: WebSocket | None = None) -> None:
-        """Remove a WebSocket connection.
+    async def disconnect(self, table_id: str, user_id: int, ws: WebSocket | None = None) -> bool:
+        """Remove a WebSocket connection. Returns True if actually removed.
 
         Bug 1 fix: if ws is provided, only remove if the stored WebSocket
         matches. Prevents a stale tab's finally block from removing a
@@ -47,15 +47,16 @@ class ConnectionManager:
         """
         table_conns = self._tables.get(table_id)
         if table_conns is None:
-            return
+            return False
         stored = table_conns.get(user_id)
         if ws is not None and stored is not ws:
             # The stored connection is newer — don't remove it
-            return
+            return False
         table_conns.pop(user_id, None)
         if not table_conns:
             del self._tables[table_id]
         log.debug("Disconnected: table=%s user=%d", table_id, user_id)
+        return True
 
     async def send_to_player(self, table_id: str, user_id: int, msg: dict) -> None:
         """Send a message to a specific player at a table."""
@@ -83,12 +84,12 @@ class ConnectionManager:
         # Pre-serialize once
         text = json.dumps(msg)
 
-        async def _send(uid: int, ws: WebSocket) -> int | None:
+        async def _send(uid: int, ws: WebSocket) -> tuple[int, WebSocket] | None:
             try:
                 await asyncio.wait_for(ws.send_text(text), timeout=SEND_TIMEOUT)
                 return None
             except Exception:
-                return uid
+                return (uid, ws)
 
         tasks = [
             _send(uid, ws) for uid, ws in connections.items()
@@ -98,9 +99,10 @@ class ConnectionManager:
             return
 
         results = await asyncio.gather(*tasks)
-        for uid in results:
-            if uid is not None:
-                await self.disconnect(table_id, uid)
+        for result in results:
+            if result is not None:
+                uid, ws = result
+                await self.disconnect(table_id, uid, ws)
 
     def get_connected_users(self, table_id: str) -> set[int]:
         """Return set of user IDs connected to a table."""

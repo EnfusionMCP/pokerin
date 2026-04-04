@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 class BalanceResponse(BaseModel):
     balance: int  # ISK-cents
-    deposit_code: str
 
 
 class WithdrawRequest(BaseModel):

@@ -75,8 +75,12 @@ async def callback(
 
     await session.commit()
 
+    # Ban check
+    if user.is_banned:
+        raise HTTPException(status_code=403, detail=f"Account banned: {user.ban_reason or 'Contact admin'}")
+
     # Issue app JWT
-    token = app_jwt.create_token(user.id, character_id, character_name)
+    token = app_jwt.create_token(user.id, character_id, character_name, is_admin=user.is_admin)
 
     # Redirect to frontend with token
     frontend_url = f"{settings.base_url}/#/lobby?token={token}"

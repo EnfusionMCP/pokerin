@@ -17,8 +17,6 @@ class ServerMsg(StrEnum):
     ACTION_PROMPT = "action_prompt"   # it's your turn
     HAND_RESULT = "hand_result"       # showdown result + seed reveal
     SEAT_UPDATE = "seat_update"       # player sat/stood/disconnected
-    POT_UPDATE = "pot_update"         # pot changed
-    BALANCE = "balance"               # your balance updated
     CHAT = "chat"                     # table chat message
     ERROR = "error"                   # error message
 

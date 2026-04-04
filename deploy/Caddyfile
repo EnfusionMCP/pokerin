@@ -1,14 +1,54 @@
 pokerin.space {
-	reverse_proxy app:8080
+	# Security headers on all responses
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		-Server
+	}
 
-	# WebSocket — Caddy handles this automatically, but be explicit
-	# about timeouts so idle poker connections don't get killed
-	reverse_proxy /ws/* app:8080 {
-		flush_interval -1
-		transport http {
-			keepalive 30s
-			keepalive_idle_conns 100
+	# Block docs/openapi — defense in depth (backend also gates on debug flag)
+	handle /docs* {
+		respond 404
+	}
+	handle /openapi.json {
+		respond 404
+	}
+
+	# API and auth routes -> backend
+	handle /api/* {
+		reverse_proxy app:8080
+	}
+	handle /auth/* {
+		reverse_proxy app:8080
+	}
+	handle /health {
+		reverse_proxy app:8080
+	}
+
+	# WebSocket -> backend
+	handle /ws/* {
+		reverse_proxy app:8080 {
+			flush_interval -1
+			transport http {
+				keepalive 30s
+				keepalive_idle_conns 100
+			}
 		}
+	}
+
+	# Frontend static files (SPA with hash router)
+	handle {
+		root * /srv/frontend
+
+		# Immutable cache for hashed assets (Vite adds content hash to filenames)
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+
+		try_files {path} /index.html
+		file_server
 	}
 
 	log {

@@ -7,13 +7,17 @@ import jwt
 from ..config import settings
 
 
-def create_token(user_id: int, character_id: int, character_name: str) -> str:
+def create_token(
+    user_id: int, character_id: int, character_name: str,
+    is_admin: bool = False,
+) -> str:
     """Issue a JWT for an authenticated user.
 
     Args:
         user_id: Internal database user ID.
         character_id: EVE character ID.
         character_name: EVE character name.
+        is_admin: Whether the user has admin privileges.
 
     Returns:
         Encoded JWT string.
@@ -23,6 +27,7 @@ def create_token(user_id: int, character_id: int, character_name: str) -> str:
         "sub": str(user_id),
         "cid": character_id,
         "name": character_name,
+        "adm": is_admin,
         "iat": now,
         "exp": now + timedelta(hours=settings.jwt_expire_hours),
     }

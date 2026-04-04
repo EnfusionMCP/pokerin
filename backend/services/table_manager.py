@@ -38,14 +38,35 @@ class TableManager:
         return table
 
     def _on_table_done(self, table_id: str, task: asyncio.Task) -> None:
-        """Callback when a table task finishes — log crashes, clean up."""
+        """Callback when a table task finishes — log crashes, refund stacks."""
         if task.cancelled():
             return
         exc = task.exception()
         if exc:
             log.error("Table %s crashed: %s", table_id, exc, exc_info=exc)
+            # Credit all seated players' stacks back on crash
+            table = self._tables.get(table_id)
+            if table:
+                asyncio.create_task(self._refund_table(table_id, table))
         self._tables.pop(table_id, None)
         self._tasks.pop(table_id, None)
+
+    async def _refund_table(self, table_id: str, table: PokerTable) -> None:
+        """Refund all seated players after a crash, including in-flight bets."""
+        for seat in table.seats:
+            if seat is None:
+                continue
+            # Include stack + any money currently bet
+            refund_amount = seat.stack + getattr(seat, 'total_bet', 0)
+            if refund_amount > 0 and seat.user_id not in getattr(table, '_bot_users', set()):
+                try:
+                    await self._bank.credit(
+                        seat.user_id, refund_amount, tx_type="cashout",
+                        reference_id=f"table:{table_id}:crash_refund:{seat.user_id}",
+                    )
+                    log.info("Crash refund: user=%d amount=%d table=%s", seat.user_id, refund_amount, table_id)
+                except Exception as e:
+                    log.error("Failed crash refund: user=%d amount=%d: %s", seat.user_id, refund_amount, e)
 
     def get_table(self, table_id: str) -> Optional[PokerTable]:
         """Get a table by ID."""
@@ -74,16 +95,7 @@ class TableManager:
         table = self._tables.pop(table_id, None)
         task = self._tasks.pop(table_id, None)
         if table:
-            # Credit all seated players' stacks back to their balance
-            for seat in table.seats:
-                if seat and seat.stack > 0:
-                    try:
-                        await self._bank.credit(
-                            seat.user_id, seat.stack, tx_type="cashout",
-                            reference_id=f"table:{table_id}:shutdown",
-                        )
-                    except Exception as e:
-                        log.error("Failed to credit user %d on shutdown: %s", seat.user_id, e)
+            # Stop the table task FIRST so no hand can complete during credit
             await table.shutdown()
         if task:
             task.cancel()
@@ -91,6 +103,18 @@ class TableManager:
                 await task
             except (asyncio.CancelledError, Exception):
                 pass
+        if table:
+            # NOW credit all seated players' stacks (table is fully stopped)
+            for seat in table.seats:
+                refund = (seat.stack if seat else 0) + getattr(seat, 'total_bet', 0)
+                if seat and refund > 0 and seat.user_id not in table._bot_users:
+                    try:
+                        await self._bank.credit(
+                            seat.user_id, refund, tx_type="cashout",
+                            reference_id=f"table:{table_id}:shutdown:{seat.user_id}",
+                        )
+                    except Exception as e:
+                        log.error("Failed to credit user %d on shutdown: %s", seat.user_id, e)
         log.info("Destroyed table: %s", table_id)
 
     async def shutdown_all(self) -> None:

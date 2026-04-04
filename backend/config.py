@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # Bank character (deposit detection)
     bank_character_id: int = 0
     bank_refresh_token: str = ""
+    bank_client_id: str = ""  # separate SSO app for bank auth
 
     # App JWT
     jwt_secret: str = "CHANGE-ME-IN-PRODUCTION"

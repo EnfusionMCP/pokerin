@@ -10,6 +10,7 @@ engine = create_async_engine(
     echo=settings.debug,
     pool_size=10,
     max_overflow=20,
+    pool_recycle=1800,  # recycle connections every 30 min to avoid stale connections
 )
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

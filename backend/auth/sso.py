@@ -17,6 +17,7 @@ SSO_TOKEN_URL = f"{settings.eve_sso_base}/v2/oauth/token"
 # In production with multiple workers, move this to Redis.
 _pending_logins: dict[str, tuple[str, float]] = {}
 _LOGIN_EXPIRY = 600  # 10 minutes
+_MAX_PENDING = 5000  # cap to prevent DoS (rate limiter covers /auth/ at 20/min)
 
 
 def _cleanup_expired() -> None:
@@ -25,6 +26,11 @@ def _cleanup_expired() -> None:
     expired = [k for k, (_, ts) in _pending_logins.items() if now - ts > _LOGIN_EXPIRY]
     for k in expired:
         del _pending_logins[k]
+    # Hard cap: if still too many, drop oldest
+    if len(_pending_logins) > _MAX_PENDING:
+        sorted_keys = sorted(_pending_logins, key=lambda k: _pending_logins[k][1])
+        for k in sorted_keys[:len(_pending_logins) - _MAX_PENDING]:
+            del _pending_logins[k]
 
 
 def generate_pkce() -> tuple[str, str]:

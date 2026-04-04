@@ -45,6 +45,8 @@ class Deck:
 
     def burn(self) -> None:
         """Burn one card (standard poker procedure before community deals)."""
+        if self._pos >= len(self._cards):
+            raise RuntimeError("Deck exhausted — cannot burn")
         self._pos += 1
 
     @property

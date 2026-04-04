@@ -105,8 +105,10 @@ class BankService:
 
         Returns new balance.
         """
-        if amount <= 0:
-            return 0  # nothing to credit
+        if amount < 0:
+            raise ValueError(f"Cannot credit negative amount: {amount}")
+        if amount == 0:
+            return 0
         return await self.adjust_balance(user_id, amount, tx_type, reference_id)
 
     async def check_balance(self, user_id: int) -> int:

@@ -32,5 +32,7 @@ class RakeCalculator:
         """
         if not saw_flop:
             return 0
-        rake = int(pot_total * self.percent)
-        return min(rake, self.cap)
+        rake = int(round(pot_total * self.percent))
+        if self.cap > 0:
+            rake = min(rake, self.cap)
+        return rake

@@ -1,14 +1,19 @@
 """WebSocket route — /ws/table/{table_id}
 
-Handles authentication via JWT query parameter, routes player messages
-to the poker table, and relays game events back to clients.
+Authentication via first-message token (not query string) to avoid
+tokens appearing in server/proxy access logs.
 """
 
 import logging
+import time
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from sqlalchemy import select
 
 from ..auth.jwt import decode_token
+from ..db import async_session
+from ..models.user import User
 from .manager import ConnectionManager
 from .protocol import ClientMsg
 
@@ -19,9 +24,14 @@ router = APIRouter()
 # Singleton — initialized in main.py lifespan and shared with table manager
 conn_manager = ConnectionManager()
 
+# Per-user WS connection rate limit: max 5 connections per 10 seconds
+_ws_connect_times: dict[int, list[float]] = {}
+_WS_RATE_WINDOW = 10.0
+_WS_RATE_MAX = 5
+
 
 def _authenticate_ws(token: str) -> dict | None:
-    """Validate JWT from query param. Returns user dict or None."""
+    """Validate JWT. Returns user dict or None."""
     try:
         payload = decode_token(token)
         return {
@@ -34,23 +44,67 @@ def _authenticate_ws(token: str) -> dict | None:
 
 
 @router.websocket("/ws/table/{table_id}")
-async def table_websocket(websocket: WebSocket, table_id: str, token: str = Query(...)):
+async def table_websocket(websocket: WebSocket, table_id: str):
     """WebSocket endpoint for a poker table.
 
-    Authentication: pass ?token=<jwt> in the connection URL.
-    The server never sends other players' hole cards — only the
-    connecting player's own cards are included in state messages.
+    Authentication: send {"type": "auth", "token": "<jwt>"} as the first
+    message after connection. The server closes if the first message isn't
+    a valid auth message within 10 seconds.
     """
-    # BUG 10 fix: authenticate before accepting. If invalid, accept then
-    # immediately close — can't send close frame on unaccepted WebSocket.
-    user = _authenticate_ws(token)
+    # Per-user chat rate limit: 1 message per second
+    _last_chat: dict[int, float] = {}
+
+    await websocket.accept()
+
+    # Wait for auth message (first message must be auth)
+    import asyncio
+    import json as _json
+
+    try:
+        raw_text = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+        raw = _json.loads(raw_text)
+    except (asyncio.TimeoutError, ValueError, TypeError, WebSocketDisconnect):
+        await websocket.close(code=4001, reason="Auth timeout or invalid message")
+        return
+
+    if raw.get("type") != "auth" or not raw.get("token"):
+        await websocket.close(code=4001, reason="First message must be auth")
+        return
+
+    user = _authenticate_ws(raw["token"])
     if user is None:
-        await websocket.accept()
+        await websocket.send_json({"type": "error", "message": "Invalid or expired token"})
         await websocket.close(code=4001, reason="Invalid or expired token")
         return
 
-    await websocket.accept()
     user_id = user["user_id"]
+
+    # WS connection rate limit
+    now = time.monotonic()
+    times = _ws_connect_times.get(user_id, [])
+    times = [t for t in times if now - t < _WS_RATE_WINDOW]
+    if len(times) >= _WS_RATE_MAX:
+        await websocket.send_json({"type": "error", "message": "Too many connections, slow down"})
+        await websocket.close(code=4029, reason="Rate limited")
+        return
+    times.append(now)
+    _ws_connect_times[user_id] = times
+
+    # Periodic cleanup — purge stale entries every 100 connections
+    if len(_ws_connect_times) > 100:
+        stale = [uid for uid, ts in _ws_connect_times.items()
+                 if all(now - t > _WS_RATE_WINDOW for t in ts)]
+        for uid in stale:
+            del _ws_connect_times[uid]
+
+    # Ban check
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        db_user = result.scalar_one_or_none()
+        if db_user and db_user.is_banned:
+            await websocket.send_json({"type": "error", "message": "Account banned"})
+            await websocket.close(code=4001, reason="Account banned")
+            return
 
     # Get table from table manager
     table_manager = getattr(websocket.app.state, "table_manager", None)
@@ -65,15 +119,17 @@ async def table_websocket(websocket: WebSocket, table_id: str, token: str = Quer
         await websocket.close(code=4004)
         return
 
-    # BUG D fix: connect + initial send inside try/finally so cleanup always runs
     try:
         await conn_manager.connect(table_id, user_id, websocket)
+
+        # Clear disconnect flag if player is reconnecting mid-hand
+        table.handle_reconnect(user_id)
 
         # Send current table state (filtered for this player)
         state = table.get_state_for_player(user_id)
         await websocket.send_json(state)
 
-        # Bug 8 fix: if it's this player's turn, re-send the action prompt
+        # If it's this player's turn, re-send the action prompt
         if table.action_on >= 0 and table.phase.value == "betting":
             seat = table.seats[table.action_on]
             if seat and seat.user_id == user_id and seat.is_active:
@@ -87,16 +143,27 @@ async def table_websocket(websocket: WebSocket, table_id: str, token: str = Quer
                     "timeout": 30.0,
                 })
 
-        async for raw in websocket.iter_json():
+        async for text in websocket.iter_text():
+            try:
+                raw = _json.loads(text)
+            except (ValueError, TypeError):
+                await websocket.send_json({"type": "error", "message": "Invalid JSON"})
+                continue
             msg_type = raw.get("type")
 
             if msg_type == ClientMsg.SIT:
+                try:
+                    sit_seat = int(raw.get("seat", -1))
+                    sit_buyin = int(raw.get("buyin", 0))
+                except (TypeError, ValueError):
+                    await websocket.send_json({"type": "error", "message": "Invalid seat or buyin"})
+                    continue
                 await table.sit_down(
                     user_id=user_id,
                     character_id=user["character_id"],
                     character_name=user["character_name"],
-                    seat=raw.get("seat", -1),
-                    buyin=raw.get("buyin", 0),
+                    seat=sit_seat,
+                    buyin=sit_buyin,
                 )
 
             elif msg_type == ClientMsg.STAND:
@@ -113,6 +180,10 @@ async def table_websocket(websocket: WebSocket, table_id: str, token: str = Quer
                 await table.add_chips(user_id, chip_amount)
 
             elif msg_type == ClientMsg.CHAT:
+                now = time.monotonic()
+                if now - _last_chat.get(user_id, 0) < 1.0:
+                    continue  # rate limited, silently drop
+                _last_chat[user_id] = now
                 text = raw.get("text", "")[:200]  # limit chat length
                 await conn_manager.broadcast_table(table_id, {
                     "type": "chat",
@@ -132,6 +203,7 @@ async def table_websocket(websocket: WebSocket, table_id: str, token: str = Quer
     except Exception as e:
         log.error("WebSocket error: user=%d table=%s: %s", user_id, table_id, e)
     finally:
-        # Bug 1 fix: pass ws identity so stale tab doesn't remove newer connection
-        await conn_manager.disconnect(table_id, user_id, websocket)
-        await table.handle_disconnect(user_id)
+        # Only handle disconnect if this was the CURRENT connection (not a stale tab)
+        removed = await conn_manager.disconnect(table_id, user_id, websocket)
+        if removed:
+            await table.handle_disconnect(user_id)

@@ -1,18 +1,15 @@
-"""Wallet API — balance, deposits, withdrawals."""
+"""Wallet API — balance, withdrawals, transactions."""
 
 import logging
-import secrets
-import string
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
 from ..deps import get_current_user
 from ..models.ledger import Transaction, Withdrawal
-from ..models.user import DepositCode, User
+from ..models.user import User
 from ..schemas.wallet import (
     BalanceResponse,
     TransactionItem,
@@ -25,41 +22,17 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["wallet"])
 
 
-def _generate_deposit_code() -> str:
-    """Generate a unique deposit code like PKR-A7X9F2."""
-    chars = string.ascii_uppercase + string.digits
-    suffix = "".join(secrets.choice(chars) for _ in range(6))
-    return f"PKR-{suffix}"
-
-
 @router.get("/balance", response_model=BalanceResponse)
 async def get_balance(
     user: dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Get current balance and active deposit code."""
+    """Get current balance."""
     db_user = await session.get(User, user["user_id"])
     if not db_user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Find or create a deposit code
-    result = await session.execute(
-        select(DepositCode)
-        .where(DepositCode.user_id == user["user_id"], DepositCode.used_at.is_(None))
-        .order_by(DepositCode.created_at.desc())
-        .limit(1)
-    )
-    deposit_code = result.scalar_one_or_none()
-
-    if deposit_code is None:
-        code_str = _generate_deposit_code()
-        deposit_code = DepositCode(user_id=user["user_id"], code=code_str)
-        session.add(deposit_code)
-        await session.commit()
-    else:
-        code_str = deposit_code.code
-
-    return BalanceResponse(balance=db_user.balance, deposit_code=code_str)
+    return BalanceResponse(balance=db_user.balance)
 
 
 @router.post("/withdraw", response_model=WithdrawResponse)
@@ -72,7 +45,11 @@ async def request_withdrawal(
     if req.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
 
-    # BUG 5 fix: SELECT FOR UPDATE to prevent concurrent overdraw
+    MIN_WITHDRAWAL = 100_000_00  # 100K ISK minimum (in ISK-cents)
+    if req.amount < MIN_WITHDRAWAL:
+        raise HTTPException(status_code=400, detail="Minimum withdrawal is 100K ISK")
+
+    # Lock user row first, then check pending count — prevents TOCTOU race
     result = await session.execute(
         select(User).where(User.id == user["user_id"]).with_for_update()
     )
@@ -80,13 +57,19 @@ async def request_withdrawal(
     if not db_user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Check pending withdrawal count (inside the user lock)
+    pending_count = await session.execute(
+        select(func.count(Withdrawal.id))
+        .where(Withdrawal.user_id == user["user_id"], Withdrawal.status == "pending")
+    )
+    if (pending_count.scalar() or 0) >= 5:
+        raise HTTPException(status_code=400, detail="Too many pending withdrawals (max 5)")
+
     if db_user.balance < req.amount:
         raise HTTPException(status_code=400, detail="Insufficient balance")
 
-    # Debit balance immediately (row is locked)
     db_user.balance -= req.amount
 
-    # Record transaction
     tx = Transaction(
         user_id=user["user_id"],
         type="withdrawal",
@@ -96,7 +79,6 @@ async def request_withdrawal(
     )
     session.add(tx)
 
-    # Create withdrawal request
     withdrawal = Withdrawal(
         user_id=user["user_id"],
         amount=req.amount,
