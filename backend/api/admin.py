@@ -2,8 +2,10 @@
 
 import logging
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, select, cast, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.jwt import create_token
@@ -11,6 +13,7 @@ from ..deps import get_admin_user, get_db
 from ..models.user import User
 from ..models.ledger import Transaction, Withdrawal
 from ..models.hand import Hand, HandAction, HandPlayer
+from ..models.analytics import PageView
 from ..services.withdrawal_worker import complete_withdrawal, reject_withdrawal
 
 log = logging.getLogger(__name__)
@@ -450,3 +453,48 @@ async def list_bots(
     if bot_service is None:
         return {}
     return bot_service.list_bots()
+
+
+# --- Analytics ---
+
+@router.get("/analytics")
+async def get_analytics(
+    _admin: dict = Depends(get_admin_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """Traffic stats: total views, unique visitors, daily breakdown."""
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=7)
+
+    # Total all time
+    total_views = (await session.execute(select(func.count(PageView.id)))).scalar() or 0
+    total_unique = (await session.execute(select(func.count(func.distinct(PageView.ip_hash))))).scalar() or 0
+
+    # Today
+    today_views = (await session.execute(
+        select(func.count(PageView.id)).where(PageView.timestamp >= today_start)
+    )).scalar() or 0
+    today_unique = (await session.execute(
+        select(func.count(func.distinct(PageView.ip_hash))).where(PageView.timestamp >= today_start)
+    )).scalar() or 0
+
+    # Daily breakdown for last 7 days
+    daily = (await session.execute(
+        select(
+            cast(PageView.timestamp, Date).label("day"),
+            func.count(PageView.id).label("views"),
+            func.count(func.distinct(PageView.ip_hash)).label("unique"),
+        )
+        .where(PageView.timestamp >= week_start)
+        .group_by(cast(PageView.timestamp, Date))
+        .order_by(cast(PageView.timestamp, Date))
+    )).all()
+
+    return {
+        "total_views": total_views,
+        "total_unique": total_unique,
+        "today_views": today_views,
+        "today_unique": today_unique,
+        "daily": [{"date": str(d.day), "views": d.views, "unique": d.unique} for d in daily],
+    }

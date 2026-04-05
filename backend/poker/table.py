@@ -463,6 +463,7 @@ class PokerTable:
                 "amount": action.amount,
                 "stack": seat.stack,
                 "current_bet": seat.current_bet,
+                "status": seat.status.value,
                 "pot": sum(p.amount for p in self._calculate_current_pots()),
                 "action_on": self.action_on if more_action else -1,
             })
@@ -749,6 +750,11 @@ class PokerTable:
             first_winner_seat = winners_list[0]["seat"]
             self.seats[first_winner_seat].stack += orphan_carry
             winners_list[0]["amount"] += orphan_carry
+
+        # Show all in-hand players' cards at showdown (not just winners)
+        for s in self.seats:
+            if s and s.is_in_hand and str(s.seat) not in shown:
+                shown[str(s.seat)] = [str(c) for c in s.hole_cards]
 
         return {
             "winners": winners_list,

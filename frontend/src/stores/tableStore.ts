@@ -211,30 +211,22 @@ export const useTableStore = create<TableState>((set, get) => ({
         break;
 
       case 'community': {
-        // Trigger bet collection animation before showing new cards
-        const STREET_ORDER = ['preflop', 'flop', 'turn', 'river'];
-        const targetIdx = STREET_ORDER.indexOf(msg.street);
+        // Show community cards IMMEDIATELY — never delay card display.
+        // Only the bet-clearing animation is deferred.
         const boardSnapshot = msg.board;
-        const streetSnapshot = msg.street;
+        const clearedSeats = state.seats.map(s => ({ ...s, current_bet: 0 }));
         if (_collectTimeout) clearTimeout(_collectTimeout);
-        set({ collectingBets: true });
+        set({
+          collectingBets: true,
+          community: boardSnapshot,
+          street: msg.street,
+          lastActions: {},
+        });
         _collectTimeout = setTimeout(() => {
           _collectTimeout = null;
-          // Only skip if we've already moved PAST this street
-          const cur = get();
-          const curIdx = STREET_ORDER.indexOf(cur.street);
-          if (curIdx > targetIdx) {
-            set({ collectingBets: false });
-            return;
-          }
-          // Clear current_bet on all seats (bets were collected into pot)
-          const clearedSeats = cur.seats.map(s => ({ ...s, current_bet: 0 }));
           set({
             seats: clearedSeats,
-            community: boardSnapshot,
-            street: streetSnapshot,
             collectingBets: false,
-            lastActions: {},
           });
         }, 400);
         break;
@@ -249,6 +241,7 @@ export const useTableStore = create<TableState>((set, get) => ({
             ...seat,
             stack: msg.stack,
             current_bet: msg.current_bet ?? seat.current_bet,
+            status: msg.status ?? seat.status,
           };
         }
         // System chat for all actions
@@ -350,13 +343,6 @@ export const useTableStore = create<TableState>((set, get) => ({
             ...winMsgs,
           ],
         });
-        // Clear showdown state after 3s so the table resets between hands
-        setTimeout(() => {
-          const cur = get();
-          if (cur.winners.length > 0 && cur.handNum === state.handNum) {
-            set({ community: [], winners: [], shownCards: {}, pots: [], lastActions: {}, actionOn: -1 });
-          }
-        }, 3000);
         break;
       }
 

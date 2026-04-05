@@ -128,12 +128,9 @@ export function PokerTable() {
 
         {/* Secondary pot below community cards */}
         {pots.length > 0 && community.length > 0 && winners.length === 0 && (
-          <div className="absolute left-1/2 top-[58%] -translate-x-1/2 flex items-center gap-1.5 bg-black/30 backdrop-blur-sm rounded-full px-2.5 py-0.5">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="shrink-0">
-              <circle cx="7" cy="7" r="6.5" fill="#c9a84c" stroke="#a8893a" strokeWidth="1" />
-              <circle cx="7" cy="7" r="4" fill="none" stroke="#a8893a" strokeWidth="0.8" strokeDasharray="2 1.5" />
-            </svg>
-            <span className="text-xs text-gold font-mono font-bold">
+          <div className="absolute left-1/2 top-[58%] -translate-x-1/2 flex items-center gap-1.5 bg-black/30 rounded-full px-2.5 py-0.5">
+            <span className="text-xs text-text-muted font-bold">Pot:</span>
+            <span className="text-xs text-white font-bold">
               {formatIskCompact(pots.reduce((s, p) => s + p.amount, 0))}
             </span>
           </div>
@@ -190,10 +187,10 @@ export function PokerTable() {
         <DealAnimation dealKey={dealKey} />
 
         {/* Table info */}
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/25 backdrop-blur-sm rounded-full px-3.5 py-1">
-          <span className="text-[10px] md:text-xs text-white/25 font-display font-medium tracking-wide">{tableName}</span>
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/30 rounded-full px-3 py-1">
+          <span className="text-[10px] md:text-xs text-white/20 font-semibold">{tableName}</span>
           <span className="text-[10px] text-white/10">|</span>
-          <span className="text-[10px] md:text-xs text-white/25 font-mono">
+          <span className="text-[10px] md:text-xs text-white/20 font-semibold">
             NL {formatIskCompact(blinds.small)}/{formatIskCompact(blinds.big)}
           </span>
         </div>
@@ -207,7 +204,7 @@ export function PokerTable() {
 
       {/* Hand strength indicator — positioned above action/pre-action buttons */}
       {handStrength && mySeat >= 0 && (
-        <div className="fixed bottom-16 right-4 z-20 text-xs text-gray-400 bg-panel/80 backdrop-blur-md border border-gray-700/60 rounded-xl px-3 py-1.5 shadow-lg font-medium">
+        <div className="fixed bottom-16 right-4 z-20 text-xs text-text bg-surface/90 border border-surface-light rounded-lg px-3 py-1.5 font-semibold">
           {handStrength}
         </div>
       )}
@@ -223,9 +220,9 @@ export function PokerTable() {
               const addAmount = canAdd;
               send?.({ type: 'add_chips', amount: addAmount });
             }}
-            className="fixed bottom-4 left-4 z-20 bg-gold/10 hover:bg-gold/20 text-gold text-xs font-semibold px-3 py-2 rounded-xl border border-gold/20 transition-all shadow-lg backdrop-blur-sm"
+            className="fixed bottom-4 left-4 z-20 bg-green/10 hover:bg-green/20 text-green text-xs font-bold px-3 py-2 rounded-lg border border-green/20 transition-all"
           >
-            Top Up to <span className="font-mono">{formatIskCompact(maxBuyin)}</span>
+            Top Up to {formatIskCompact(maxBuyin)}
           </button>
         );
       })()}

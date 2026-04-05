@@ -29,8 +29,22 @@ function useTokenExpiryCheck() {
   }, [token]);
 }
 
+function usePageTracking() {
+  const pinged = useRef(false);
+  useEffect(() => {
+    if (pinged.current) return;
+    pinged.current = true;
+    fetch('/api/ping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: window.location.hash || '/' }),
+    }).catch(() => {});
+  }, []);
+}
+
 export default function App() {
   useTokenExpiryCheck();
+  usePageTracking();
   return (
     <>
       <AppRouter />

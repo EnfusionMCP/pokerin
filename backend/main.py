@@ -5,10 +5,11 @@ import logging
 from contextlib import asynccontextmanager
 from decimal import Decimal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .middleware.rate_limit import RateLimitMiddleware
+from .middleware.analytics import AnalyticsMiddleware
 
 from .auth.router import router as auth_router
 from .api.lobby import router as lobby_router
@@ -101,6 +102,12 @@ async def lifespan(app: FastAPI):
 
     deposit_task = asyncio.create_task(_deposit_supervisor(), name="deposit-worker")
 
+    # Create analytics table if it doesn't exist
+    from .db import engine
+    from .models.analytics import PageView
+    async with engine.begin() as conn:
+        await conn.run_sync(PageView.__table__.create, checkfirst=True)
+
     log.info("pokerin.space ready — %d tables active", len(default_tables))
 
     yield
@@ -133,6 +140,9 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
+# Analytics — track page views
+app.add_middleware(AnalyticsMiddleware)
+
 # Rate limiting on sensitive endpoints
 app.add_middleware(RateLimitMiddleware)
 
@@ -148,3 +158,23 @@ app.include_router(admin_router)
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "pokerin.space"}
+
+
+@app.post("/api/ping")
+async def ping(request: Request):
+    """Tracking pixel — frontend calls this on page load."""
+    import hashlib
+    from .db import async_session as _async_session
+    from .models.analytics import PageView
+    try:
+        ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown")
+        ip = ip.split(",")[0].strip()
+        ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:16]
+        body = await request.json()
+        path = str(body.get("path", "/"))[:255]
+        async with _async_session() as session:
+            session.add(PageView(ip_hash=ip_hash, path=path))
+            await session.commit()
+    except Exception:
+        pass
+    return {"ok": True}

@@ -9,7 +9,7 @@ import type {
   AdminUser, AdminWithdrawal, AdminHandSummary, AdminHandDetail, AdminDeposit,
 } from '../../types/api';
 
-type Tab = 'overview' | 'users' | 'withdrawals' | 'hands' | 'deposits';
+type Tab = 'overview' | 'users' | 'withdrawals' | 'hands' | 'deposits' | 'traffic';
 
 export function AdminPage() {
   const isAdmin = useAuthStore((s) => s.isAdmin);
@@ -29,6 +29,7 @@ export function AdminPage() {
     { key: 'withdrawals', label: 'Withdrawals' },
     { key: 'hands', label: 'Hands' },
     { key: 'deposits', label: 'Deposits' },
+    { key: 'traffic', label: 'Traffic' },
   ];
 
   return (
@@ -57,6 +58,7 @@ export function AdminPage() {
         {tab === 'withdrawals' && <WithdrawalsTab />}
         {tab === 'hands' && <HandsTab />}
         {tab === 'deposits' && <DepositsTab />}
+        {tab === 'traffic' && <TrafficTab />}
       </div>
     </div>
   );
@@ -525,6 +527,87 @@ function DepositsTab() {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+interface AnalyticsData {
+  total_views: number;
+  total_unique: number;
+  today_views: number;
+  today_unique: number;
+  daily: { date: string; views: number; unique: number }[];
+}
+
+function TrafficTab() {
+  const [data, setData] = useState<AnalyticsData | null>(null);
+  const token = useAuthStore((s) => s.token);
+
+  useEffect(() => {
+    if (!token) return;
+    fetch('/api/admin/analytics', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(setData)
+      .catch(() => {});
+  }, [token]);
+
+  if (!data) return <div className="text-text-muted text-sm">Loading...</div>;
+
+  const maxViews = Math.max(...data.daily.map(d => d.views), 1);
+
+  return (
+    <div className="space-y-6">
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-surface rounded-lg border border-surface-light/50 p-4">
+          <div className="text-[10px] text-text-muted uppercase tracking-widest font-bold mb-1">Total Views</div>
+          <div className="text-2xl font-extrabold text-white">{data.total_views.toLocaleString()}</div>
+        </div>
+        <div className="bg-surface rounded-lg border border-surface-light/50 p-4">
+          <div className="text-[10px] text-text-muted uppercase tracking-widest font-bold mb-1">Unique Visitors</div>
+          <div className="text-2xl font-extrabold text-green">{data.total_unique.toLocaleString()}</div>
+        </div>
+        <div className="bg-surface rounded-lg border border-surface-light/50 p-4">
+          <div className="text-[10px] text-text-muted uppercase tracking-widest font-bold mb-1">Today Views</div>
+          <div className="text-2xl font-extrabold text-white">{data.today_views.toLocaleString()}</div>
+        </div>
+        <div className="bg-surface rounded-lg border border-surface-light/50 p-4">
+          <div className="text-[10px] text-text-muted uppercase tracking-widest font-bold mb-1">Today Unique</div>
+          <div className="text-2xl font-extrabold text-green">{data.today_unique.toLocaleString()}</div>
+        </div>
+      </div>
+
+      {/* Daily chart — simple bar chart */}
+      <div className="bg-surface rounded-lg border border-surface-light/50 p-5">
+        <h3 className="text-xs font-bold text-text-muted uppercase tracking-wider mb-4">Last 7 Days</h3>
+        {data.daily.length === 0 ? (
+          <div className="text-text-muted text-sm">No data yet</div>
+        ) : (
+          <div className="flex items-end gap-2 h-32">
+            {data.daily.map((d) => (
+              <div key={d.date} className="flex-1 flex flex-col items-center gap-1">
+                <div className="text-[10px] text-green font-bold">{d.unique}</div>
+                <div
+                  className="w-full bg-green/30 rounded-t-sm relative"
+                  style={{ height: `${Math.max(4, (d.views / maxViews) * 100)}%` }}
+                >
+                  <div
+                    className="absolute bottom-0 left-0 right-0 bg-green rounded-t-sm"
+                    style={{ height: `${Math.max(4, (d.unique / maxViews) * 100)}%` }}
+                  />
+                </div>
+                <div className="text-[9px] text-text-muted font-semibold">
+                  {new Date(d.date + 'T00:00:00').toLocaleDateString('en', { weekday: 'short' })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-4 mt-3 text-[10px] text-text-muted font-semibold">
+          <div className="flex items-center gap-1"><div className="w-2 h-2 bg-green rounded-sm" /> Unique</div>
+          <div className="flex items-center gap-1"><div className="w-2 h-2 bg-green/30 rounded-sm" /> Total Views</div>
+        </div>
+      </div>
     </div>
   );
 }

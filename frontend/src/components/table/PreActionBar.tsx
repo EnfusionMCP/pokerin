@@ -1,4 +1,4 @@
-/** Pre-action buttons — Check/Fold, Check, Call Any toggles before your turn */
+/** Pre-action buttons — Stake-style: Check/Fold, Check, Check/Call */
 
 import { useTableStore } from '../../stores/tableStore';
 
@@ -21,7 +21,7 @@ export function PreActionBar() {
   const buttons: { key: PreAction; label: string }[] = [
     { key: 'check_fold', label: 'Check / Fold' },
     { key: 'check', label: 'Check' },
-    { key: 'call_any', label: 'Check / Call Any' },
+    { key: 'call_any', label: 'Check / Call' },
   ];
 
   return (
@@ -30,10 +30,10 @@ export function PreActionBar() {
         <button
           key={b.key}
           onClick={() => setPreAction(b.key)}
-          className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all backdrop-blur-sm ${
+          className={`px-3.5 py-2 text-xs font-bold rounded-lg border transition-all ${
             preAction === b.key
-              ? 'bg-gold/15 border-gold/30 text-gold shadow-sm'
-              : 'bg-panel/80 border-gray-700/60 text-gray-500 hover:text-gray-300 hover:border-gray-600'
+              ? 'bg-green/15 border-green/40 text-green'
+              : 'bg-surface border-surface-light text-text-muted hover:text-text hover:border-surface-lighter'
           }`}
         >
           {b.label}

@@ -1,4 +1,4 @@
-/** Compact action panel — bottom-right corner */
+/** Action panel — bottom-right, Stake-style buttons */
 
 import { useState, useEffect } from 'react';
 import { useTableStore } from '../../stores/tableStore';
@@ -13,9 +13,7 @@ export function ActionPanel() {
   const [raiseAmount, setRaiseAmount] = useState(0);
 
   useEffect(() => {
-    if (prompt) {
-      setRaiseAmount(prompt.min_raise);
-    }
+    if (prompt) setRaiseAmount(prompt.min_raise);
   }, [prompt]);
 
   if (!prompt || !send) return null;
@@ -54,15 +52,15 @@ export function ActionPanel() {
   ];
 
   return (
-    <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2.5 max-w-xs">
+    <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2.5 max-w-sm">
       {/* Bet presets + slider */}
       {canBetOrRaise && (
-        <div className="flex items-center gap-1.5 bg-panel/90 backdrop-blur-md rounded-xl border border-gray-700/60 px-2.5 py-2 shadow-xl shadow-black/30">
+        <div className="flex items-center gap-1.5 bg-surface/95 rounded-lg border border-surface-light px-2.5 py-2">
           {presets.map((p) => (
             <button
               key={p.label}
               onClick={() => setRaiseAmount(Math.min(p.value, max_raise))}
-              className="px-2.5 py-1.5 text-xs font-medium bg-surface-raised hover:bg-gray-600 text-gray-300 hover:text-white rounded-lg border border-gray-700/60 transition-all"
+              className="px-2.5 py-1.5 text-xs font-bold bg-surface-light hover:bg-surface-lighter text-text rounded border border-surface-lighter/50 transition-colors"
             >
               {p.label}
             </button>
@@ -76,17 +74,17 @@ export function ActionPanel() {
             onChange={(e) => setRaiseAmount(Number(e.target.value))}
             className="w-20 md:w-28"
           />
-          <span className="text-xs text-gold font-mono font-bold min-w-[48px] text-right">
+          <span className="text-xs text-green font-bold min-w-[48px] text-right">
             {formatIskCompact(raiseAmount)}
           </span>
         </div>
       )}
 
-      {/* Action buttons */}
+      {/* Action buttons — Stake style: Fold (dark), Check/Call (green), Raise (darker) */}
       <div className="flex gap-2">
         <button
           onClick={handleFold}
-          className="px-5 py-2.5 bg-gray-800/90 hover:bg-red-800/90 text-gray-400 hover:text-white rounded-xl text-sm md:text-base font-semibold transition-all border border-gray-700/60 hover:border-red-700/60 shadow-lg shadow-black/20 backdrop-blur-sm"
+          className="px-5 py-2.5 bg-surface-light hover:bg-red/20 text-text hover:text-red rounded-lg text-sm font-bold transition-all border border-surface-lighter/30"
         >
           Fold
         </button>
@@ -94,7 +92,7 @@ export function ActionPanel() {
         {canCheck && (
           <button
             onClick={handleCheck}
-            className="px-5 py-2.5 bg-emerald-700/90 hover:bg-emerald-600/90 text-white rounded-xl text-sm md:text-base font-semibold transition-all shadow-lg shadow-emerald-900/30 backdrop-blur-sm"
+            className="px-5 py-2.5 bg-green hover:brightness-110 text-black rounded-lg text-sm font-bold transition-all"
           >
             Check
           </button>
@@ -103,20 +101,20 @@ export function ActionPanel() {
         {canCall && (
           <button
             onClick={handleCall}
-            className="px-5 py-2.5 bg-emerald-700/90 hover:bg-emerald-600/90 text-white rounded-xl text-sm md:text-base font-semibold transition-all shadow-lg shadow-emerald-900/30 backdrop-blur-sm"
+            className="px-5 py-2.5 bg-green hover:brightness-110 text-black rounded-lg text-sm font-bold transition-all"
           >
-            Call <span className="font-mono">{formatIskCompact(call_amount)}</span>
+            Call {formatIskCompact(call_amount)}
           </button>
         )}
 
         {canBetOrRaise && (
           <button
             onClick={handleRaise}
-            className="px-5 py-2.5 bg-amber-600/90 hover:bg-amber-500/90 text-white rounded-xl text-sm md:text-base font-semibold transition-all whitespace-nowrap shadow-lg shadow-amber-900/30 backdrop-blur-sm"
+            className="px-5 py-2.5 bg-surface-light hover:bg-surface-lighter text-white rounded-lg text-sm font-bold transition-all border border-surface-lighter/30 whitespace-nowrap"
           >
             {raiseAmount >= max_raise
               ? 'All-In'
-              : <>{canBet ? 'Bet' : 'Raise'} <span className="font-mono">{formatIskCompact(raiseAmount)}</span></>}
+              : `${canBet ? 'Bet' : 'Raise'} ${formatIskCompact(raiseAmount)}`}
           </button>
         )}
       </div>

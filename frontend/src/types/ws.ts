@@ -67,6 +67,7 @@ export interface PlayerActionMsg {
   amount: number;
   stack: number;
   current_bet?: number;
+  status?: SeatStatus;
   pot: number;
   action_on?: number;
 }

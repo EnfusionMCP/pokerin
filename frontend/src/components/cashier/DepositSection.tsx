@@ -12,22 +12,19 @@ export function DepositSection() {
   };
 
   return (
-    <div className="bg-panel/80 rounded-xl border border-gray-800/60 p-6 shadow-lg shadow-black/20">
-      <h3 className="font-display text-lg font-semibold text-white mb-4 tracking-wide">Deposit ISK</h3>
-
+    <div className="bg-surface rounded-lg border border-surface-light/50 p-6">
+      <h3 className="text-base font-bold text-white mb-4">Deposit ISK</h3>
       <div
-        className="bg-surface rounded-xl p-4 mb-4 border border-gray-700/60 text-center cursor-pointer hover:border-gold/30 transition-all group"
+        className="bg-base rounded-lg p-4 mb-4 border border-surface-light text-center cursor-pointer hover:border-green/30 transition-all group"
         onClick={handleCopy}
-        title="Click to copy"
       >
-        <p className="text-[10px] text-gray-500 mb-1 uppercase tracking-widest">Send ISK to:</p>
-        <p className="text-xl font-bold text-white font-display tracking-wide">{corpName}</p>
-        <p className={`text-[10px] mt-1.5 transition-colors ${copied ? 'text-gold' : 'text-gray-600 group-hover:text-gold/60'}`}>
+        <p className="text-[10px] text-text-muted mb-1 uppercase tracking-widest font-bold">Send ISK to:</p>
+        <p className="text-xl font-extrabold text-white">{corpName}</p>
+        <p className={`text-[10px] mt-1.5 font-semibold transition-colors ${copied ? 'text-green' : 'text-text-muted group-hover:text-green/60'}`}>
           {copied ? 'Copied!' : 'Click to copy'}
         </p>
       </div>
-
-      <p className="text-sm text-gray-500 leading-relaxed">Send any amount of ISK to <span className="text-gray-300 font-medium">{corpName}</span> in-game. Balance will change whenever ESI registers your deposit, this typically takes between ~5 minutes to 1 hour.</p>
+      <p className="text-sm text-text-muted leading-relaxed">Send any amount of ISK to <span className="text-text font-semibold">{corpName}</span> in-game. Balance updates within ~5 minutes to 1 hour.</p>
     </div>
   );
 }

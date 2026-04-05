@@ -15,44 +15,43 @@ export function TableRow({ table }: Props) {
 
   return (
     <tr
-      className="border-b border-gray-800/40 hover:bg-panel-light/50 cursor-pointer transition-colors group"
+      className="border-b border-surface-light/30 hover:bg-surface-light/30 cursor-pointer transition-colors group"
       onClick={() => navigate(`/table/${table.table_id}`)}
     >
-      <td className="py-3.5 px-3 md:px-5">
-        <span className="text-white font-medium text-sm group-hover:text-gold transition-colors">{table.name}</span>
+      <td className="py-3 px-4">
+        <span className="text-white font-semibold text-sm group-hover:text-green transition-colors">{table.name}</span>
       </td>
-      <td className="py-3.5 px-3 md:px-5 text-gray-300 text-sm font-mono">
+      <td className="py-3 px-4 text-text text-sm font-semibold">
         {formatBlinds(table.small_blind, table.big_blind)}
       </td>
-      <td className="py-3.5 px-3 md:px-5 text-gray-500 text-sm font-mono hidden md:table-cell">
+      <td className="py-3 px-4 text-text-muted text-sm hidden md:table-cell">
         {formatIskShort(table.min_buyin)} - {formatIskShort(table.max_buyin)}
       </td>
-      <td className="py-3.5 px-3 md:px-5">
+      <td className="py-3 px-4">
         <div className="flex items-center gap-2">
-          {/* Player dots */}
           <div className="flex gap-0.5">
             {Array.from({ length: table.max_seats }, (_, i) => (
               <div
                 key={i}
                 className={`w-1.5 h-1.5 rounded-full ${
                   i < table.player_count
-                    ? isFull ? 'bg-red-400' : 'bg-emerald-400'
-                    : 'bg-gray-700'
+                    ? isFull ? 'bg-red' : 'bg-green'
+                    : 'bg-surface-light'
                 }`}
               />
             ))}
           </div>
-          <span className={`text-xs font-mono ${isFull ? 'text-red-400' : hasPlayers ? 'text-emerald-400' : 'text-gray-600'}`}>
+          <span className={`text-xs font-bold ${isFull ? 'text-red' : hasPlayers ? 'text-green' : 'text-text-muted'}`}>
             {table.player_count}/{table.max_seats}
           </span>
         </div>
       </td>
-      <td className="py-3.5 px-3 md:px-5 text-right">
+      <td className="py-3 px-4 text-right">
         <button
-          className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+          className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${
             isFull
-              ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
-              : 'bg-emerald-700/80 hover:bg-emerald-600 text-white shadow-sm'
+              ? 'bg-surface-light text-text-muted cursor-not-allowed'
+              : 'bg-green hover:brightness-110 text-black'
           }`}
           disabled={isFull}
           onClick={(e) => {
