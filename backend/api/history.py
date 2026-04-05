@@ -1,18 +1,39 @@
-"""Hand history API — view past hands."""
+"""Hand history API — view past hands and verify provable fairness."""
 
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
 from ..deps import get_current_user
 from ..models.hand import Hand, HandAction, HandPlayer
+from ..poker.deck import Deck
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["history"])
+
+
+class VerifyRequest(BaseModel):
+    server_seed: str
+    table_id: str
+    hand_number: int
+
+
+@router.post("/verify")
+async def verify_seed(req: VerifyRequest):
+    """Reproduce a deck from a revealed seed — no auth required.
+
+    Anyone can independently verify a hand's fairness by providing
+    the server_seed, table_id, and hand_number.
+    """
+    import hashlib
+    deck = Deck.reproduce(req.server_seed, req.table_id, req.hand_number)
+    seed_hash = hashlib.sha256(req.server_seed.encode()).hexdigest()
+    return {"seed_hash": seed_hash, "deck": deck}
 
 
 @router.get("/hands")

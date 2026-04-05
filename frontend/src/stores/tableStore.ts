@@ -38,6 +38,7 @@ interface TableState {
   myCards: CardStr[] | null;
   handNum: number;
   seedHash: string | null;
+  serverSeed: string | null;
   blinds: { small: number; big: number };
 
   // Action prompt
@@ -114,6 +115,7 @@ const INITIAL_STATE = {
   myCards: null as CardStr[] | null,
   handNum: 0,
   seedHash: null as string | null,
+  serverSeed: null as string | null,
   blinds: { small: 0, big: 0 },
   prompt: null as ActionPromptMsg | null,
   promptTimerStart: null as number | null,
@@ -186,6 +188,7 @@ export const useTableStore = create<TableState>((set, get) => ({
           mySeat: findMySeat(freshSeats, state.myUserId),
           handNum: msg.hand_num,
           seedHash: msg.seed_hash,
+          serverSeed: null,
           dealer: msg.dealer,
           community: [],
           pots: msg.pot ? [{ amount: msg.pot, eligible: [] }] : [],
@@ -334,6 +337,7 @@ export const useTableStore = create<TableState>((set, get) => ({
           community: msg.community,
           winners: msg.winners,
           shownCards: msg.shown_cards,
+          serverSeed: msg.server_seed,
           pots: msg.pots ?? state.pots,
           prompt: null,
           promptTimerStart: null,

@@ -133,7 +133,7 @@ class PokerTable:
             self.phase = HandPhase.IDLE
             return
 
-        self.deck.shuffle()
+        self.deck.shuffle(self.table_id, self.hand_number)
         self._advance_dealer()
         self._post_blinds()
 

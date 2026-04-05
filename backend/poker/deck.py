@@ -1,14 +1,31 @@
-"""CSPRNG deck — Fisher-Yates shuffle with secrets.randbelow()."""
+"""Provably fair deck — HMAC-SHA256 deterministic Fisher-Yates shuffle."""
 
 import hashlib
+import hmac
 import secrets
-from typing import Optional
 
 from .types import Card, ALL_CARDS
 
 
+def _hmac_shuffle(cards: list[Card], seed_hex: str, table_id: str, hand_number: int) -> None:
+    """Fisher-Yates shuffle driven by HMAC-SHA256 in counter mode.
+
+    For each swap step i (51 down to 1):
+      msg = "{table_id}:{hand_number}:{counter}" as UTF-8
+      h   = HMAC-SHA256(key=seed_raw_bytes, msg=msg)
+      j   = first 4 bytes of h as big-endian uint32, mod (i+1)
+    """
+    key = bytes.fromhex(seed_hex)
+    counter = 0
+    for i in range(len(cards) - 1, 0, -1):
+        h = hmac.new(key, f"{table_id}:{hand_number}:{counter}".encode(), hashlib.sha256).digest()
+        j = int.from_bytes(h[:4], "big") % (i + 1)
+        cards[i], cards[j] = cards[j], cards[i]
+        counter += 1
+
+
 class Deck:
-    """A 52-card deck with cryptographically secure shuffling."""
+    """A 52-card deck with provably fair deterministic shuffling."""
 
     __slots__ = ("_cards", "_pos", "_seed", "_seed_hash")
 
@@ -18,22 +35,30 @@ class Deck:
         self._seed: str = ""
         self._seed_hash: str = ""
 
-    def shuffle(self) -> None:
-        """Fisher-Yates shuffle using OS entropy via secrets.randbelow().
+    def shuffle(self, table_id: str, hand_number: int) -> None:
+        """Generate a random seed and deterministically shuffle the deck.
 
-        Generates a provable-fairness seed (committed via hash before deal,
-        revealed after hand). The seed is NOT used as the RNG source — we
-        use the OS CSPRNG directly, which has far more entropy than any
-        seed-based PRNG.
+        The seed is committed via SHA-256 hash before the deal and revealed
+        after the hand. Anyone with the seed, table_id, and hand_number can
+        reproduce the exact deck order using Deck.reproduce().
         """
         self._seed = secrets.token_hex(32)
         self._seed_hash = hashlib.sha256(self._seed.encode()).hexdigest()
 
         self._cards = list(ALL_CARDS)
-        for i in range(len(self._cards) - 1, 0, -1):
-            j = secrets.randbelow(i + 1)
-            self._cards[i], self._cards[j] = self._cards[j], self._cards[i]
+        _hmac_shuffle(self._cards, self._seed, table_id, hand_number)
         self._pos = 0
+
+    @staticmethod
+    def reproduce(server_seed: str, table_id: str, hand_number: int) -> list[str]:
+        """Reproduce the exact deck order from a revealed seed.
+
+        Returns the full 52-card deck as a list of card strings (e.g. ["Ah", "2c", ...]).
+        This is the verification primitive — compare against dealt cards to confirm fairness.
+        """
+        cards = list(ALL_CARDS)
+        _hmac_shuffle(cards, server_seed, table_id, hand_number)
+        return [str(c) for c in cards]
 
     def deal(self, n: int = 1) -> list[Card]:
         """Deal n cards from the top of the deck."""

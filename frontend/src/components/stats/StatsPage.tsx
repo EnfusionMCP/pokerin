@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { api } from '../../lib/api';
 import { formatIsk, formatIskCompact } from '../../lib/isk';
+import { reproduceShuffle, verifySeedHash } from '../../lib/provablyFair';
 import { useWalletStore } from '../../stores/walletStore';
-import type { TransactionItem, HandSummary } from '../../types/api';
+import type { TransactionItem, HandSummary, HandDetail } from '../../types/api';
 
 const TYPE_LABELS: Record<string, string> = {
   deposit: 'Deposit',
@@ -149,39 +150,193 @@ export function StatsPage() {
       )}
 
       {tab === 'hands' && (
-        <div className="bg-surface/60 rounded-xl border border-surface-light/25 p-5">
-          {loading ? (
-            <div className="text-text-muted text-sm py-8 text-center">Loading...</div>
-          ) : hands.length === 0 ? (
-            <div className="text-text-muted text-sm py-8 text-center">No hands yet</div>
-          ) : (
-            <div className="max-h-[60vh] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-surface/90">
-                  <tr className="text-text-muted text-left border-b border-surface-light/30">
-                    <th className="pb-2.5 font-semibold text-[11px] uppercase tracking-wider">Hand #</th>
-                    <th className="pb-2.5 font-semibold text-[11px] uppercase tracking-wider">Table</th>
-                    <th className="pb-2.5 font-semibold text-[11px] uppercase tracking-wider">Board</th>
-                    <th className="pb-2.5 font-semibold text-[11px] uppercase tracking-wider text-right">Pot</th>
-                    <th className="pb-2.5 font-semibold text-[11px] uppercase tracking-wider text-right">Date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {hands.map((h) => (
-                    <tr key={h.id} className="border-b border-surface-light/15">
-                      <td className="py-2.5 text-text font-semibold">#{h.hand_number}</td>
-                      <td className="py-2.5 text-text-muted text-xs">{h.table_id}</td>
-                      <td className="py-2.5 text-text-muted text-xs">{h.community_cards ?? '\u2014'}</td>
-                      <td className="py-2.5 text-right text-green font-bold text-xs">{formatIskCompact(h.pot_total)}</td>
-                      <td className="py-2.5 text-right text-text-muted text-xs">{new Date(h.started_at).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <HandHistoryTab hands={hands} loading={loading} />
       )}
+    </div>
+  );
+}
+
+function HandHistoryTab({ hands, loading }: { hands: HandSummary[]; loading: boolean }) {
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [detail, setDetail] = useState<HandDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [verification, setVerification] = useState<{
+    hashMatch: boolean;
+    deck: string[];
+  } | null>(null);
+  const [verifying, setVerifying] = useState(false);
+
+  const toggleExpand = useCallback(async (id: number) => {
+    if (expandedId === id) {
+      setExpandedId(null);
+      setDetail(null);
+      setVerification(null);
+      return;
+    }
+    setExpandedId(id);
+    setDetail(null);
+    setVerification(null);
+    setDetailLoading(true);
+    try {
+      const d = await api.getHandDetail(id);
+      setDetail(d);
+    } catch {
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [expandedId]);
+
+  const runVerify = useCallback(async () => {
+    if (!detail) return;
+    setVerifying(true);
+    try {
+      const [hashMatch, deck] = await Promise.all([
+        verifySeedHash(detail.server_seed, detail.server_seed_hash),
+        reproduceShuffle(detail.server_seed, detail.table_id, detail.hand_number),
+      ]);
+      setVerification({ hashMatch, deck });
+    } catch {
+      setVerification(null);
+    } finally {
+      setVerifying(false);
+    }
+  }, [detail]);
+
+  // Parse community cards string (e.g. "Ah Kd 3c 7s 2d") into array
+  const parseCommunity = (cc: string | null): string[] => {
+    if (!cc) return [];
+    // Handle both space-separated and concatenated formats
+    if (cc.includes(' ')) return cc.split(' ');
+    const cards: string[] = [];
+    for (let i = 0; i < cc.length; i += 2) cards.push(cc.substring(i, i + 2));
+    return cards;
+  };
+
+  if (loading) return <div className="bg-surface/60 rounded-xl border border-surface-light/25 p-5"><div className="text-text-muted text-sm py-8 text-center">Loading...</div></div>;
+  if (hands.length === 0) return <div className="bg-surface/60 rounded-xl border border-surface-light/25 p-5"><div className="text-text-muted text-sm py-8 text-center">No hands yet</div></div>;
+
+  return (
+    <div className="bg-surface/60 rounded-xl border border-surface-light/25 p-5">
+      <div className="max-h-[70vh] overflow-y-auto">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-surface/90">
+            <tr className="text-text-muted text-left border-b border-surface-light/30">
+              <th className="pb-2.5 font-semibold text-[11px] uppercase tracking-wider">Hand #</th>
+              <th className="pb-2.5 font-semibold text-[11px] uppercase tracking-wider">Table</th>
+              <th className="pb-2.5 font-semibold text-[11px] uppercase tracking-wider">Board</th>
+              <th className="pb-2.5 font-semibold text-[11px] uppercase tracking-wider text-right">Pot</th>
+              <th className="pb-2.5 font-semibold text-[11px] uppercase tracking-wider text-right">Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {hands.map((h) => {
+              const isOpen = expandedId === h.id;
+              return (
+                <tr key={h.id} className="contents">
+                  <td colSpan={5} className="p-0">
+                    <div
+                      onClick={() => toggleExpand(h.id)}
+                      className={`grid grid-cols-[auto_1fr_1fr_auto_auto] gap-x-4 py-2.5 px-1 border-b border-surface-light/15 cursor-pointer transition-colors ${isOpen ? 'bg-surface-light/20' : 'hover:bg-surface-light/10'}`}
+                    >
+                      <span className="text-text font-semibold">#{h.hand_number}</span>
+                      <span className="text-text-muted text-xs">{h.table_id}</span>
+                      <span className="text-text-muted text-xs">{h.community_cards ?? '\u2014'}</span>
+                      <span className="text-right text-green font-bold text-xs">{formatIskCompact(h.pot_total)}</span>
+                      <span className="text-right text-text-muted text-xs">{new Date(h.started_at).toLocaleString()}</span>
+                    </div>
+
+                    {isOpen && (
+                      <div className="bg-base/50 border-b border-surface-light/15 px-4 py-4">
+                        {detailLoading ? (
+                          <div className="text-text-muted text-xs">Loading hand details...</div>
+                        ) : !detail ? (
+                          <div className="text-red text-xs">Failed to load hand details</div>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                              <div>
+                                <span className="text-text-muted">Seed Hash: </span>
+                                <code className="text-text break-all font-mono text-[10px]">{detail.server_seed_hash}</code>
+                              </div>
+                              <div>
+                                <span className="text-text-muted">Server Seed: </span>
+                                <code className="text-text break-all font-mono text-[10px]">{detail.server_seed}</code>
+                              </div>
+                            </div>
+
+                            {!verification ? (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); runVerify(); }}
+                                disabled={verifying}
+                                className="px-4 py-1.5 bg-green/10 border border-green/25 rounded-lg text-green text-xs font-bold hover:bg-green/20 transition-all cursor-pointer disabled:opacity-50"
+                              >
+                                {verifying ? 'Verifying...' : 'Verify Fairness'}
+                              </button>
+                            ) : (
+                              <div className="space-y-3">
+                                <div className="flex items-center gap-4 text-xs">
+                                  <span className={`font-bold ${verification.hashMatch ? 'text-green' : 'text-red'}`}>
+                                    {verification.hashMatch ? '\u2713' : '\u2717'} Hash Match
+                                  </span>
+                                  <span className="text-text-muted">
+                                    SHA-256(seed) {verification.hashMatch ? 'matches' : 'does not match'} committed hash
+                                  </span>
+                                </div>
+
+                                <div>
+                                  <div className="text-text-muted text-[10px] uppercase tracking-widest mb-1.5 font-bold">
+                                    Reproduced Deck Order
+                                  </div>
+                                  <div className="flex flex-wrap gap-1">
+                                    {verification.deck.map((card, idx) => {
+                                      const community = parseCommunity(detail.community_cards);
+                                      const holeCards = detail.players
+                                        .filter((p) => p.hole_cards)
+                                        .flatMap((p) => {
+                                          const hc = p.hole_cards!;
+                                          if (hc.includes(' ')) return hc.split(' ');
+                                          const cards: string[] = [];
+                                          for (let i = 0; i < hc.length; i += 2) cards.push(hc.substring(i, i + 2));
+                                          return cards;
+                                        });
+                                      const isComm = community.includes(card);
+                                      const isHole = holeCards.includes(card);
+                                      return (
+                                        <span
+                                          key={idx}
+                                          className={`px-1 py-0.5 rounded text-[10px] font-mono font-bold ${
+                                            isComm
+                                              ? 'bg-blue/20 text-blue border border-blue/30'
+                                              : isHole
+                                                ? 'bg-green/20 text-green border border-green/30'
+                                                : 'bg-surface-light/20 text-text-muted'
+                                          }`}
+                                          title={isComm ? 'Community card' : isHole ? 'Hole card' : ''}
+                                        >
+                                          {card}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="flex gap-4 mt-2 text-[10px] text-text-muted">
+                                    <span><span className="inline-block w-2 h-2 rounded-sm bg-green/20 border border-green/30 mr-1" />Hole cards</span>
+                                    <span><span className="inline-block w-2 h-2 rounded-sm bg-blue/20 border border-blue/30 mr-1" />Community</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 /** REST API client with JWT auth */
 
 import type {
-  TableInfo, BalanceResponse, WithdrawResponse, TransactionItem, HandSummary,
+  TableInfo, BalanceResponse, WithdrawResponse, TransactionItem, HandSummary, HandDetail, VerifyResponse,
   AdminUser, AdminWithdrawal, AdminHandSummary, AdminHandDetail, AdminDeposit, AdminRakeStats,
 } from '../types/api';
 import { useAuthStore } from '../stores/authStore';
@@ -55,6 +55,13 @@ export const api = {
     apiFetch<TransactionItem[]>(`/api/transactions?limit=${limit}`),
   getHands: (limit = 50) =>
     apiFetch<HandSummary[]>(`/api/hands?limit=${limit}`),
+  getHandDetail: (id: number) =>
+    apiFetch<HandDetail>(`/api/hands/${id}`),
+  verifyHand: (serverSeed: string, tableId: string, handNumber: number) =>
+    apiFetch<VerifyResponse>('/api/verify', {
+      method: 'POST',
+      body: JSON.stringify({ server_seed: serverSeed, table_id: tableId, hand_number: handNumber }),
+    }),
 
   // Admin endpoints
   admin: {

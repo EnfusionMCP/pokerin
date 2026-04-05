@@ -48,6 +48,46 @@ export interface HandSummary {
   server_seed_hash: string;
 }
 
+// Player-facing hand detail (from GET /api/hands/:id)
+
+export interface HandDetailPlayer {
+  user_id: number;
+  seat: number;
+  hole_cards: string | null;
+  starting_stack: number;
+  ending_stack: number;
+  net_won: number;
+  is_winner: boolean;
+}
+
+export interface HandDetailAction {
+  user_id: number;
+  seat: number;
+  street: string;
+  action: string;
+  amount: number;
+  order: number;
+}
+
+export interface HandDetail {
+  id: number;
+  table_id: string;
+  hand_number: number;
+  community_cards: string | null;
+  pot_total: number;
+  started_at: string;
+  ended_at: string;
+  server_seed: string;
+  server_seed_hash: string;
+  players: HandDetailPlayer[];
+  actions: HandDetailAction[];
+}
+
+export interface VerifyResponse {
+  seed_hash: string;
+  deck: string[];
+}
+
 // Admin types
 
 export interface AdminUser {
