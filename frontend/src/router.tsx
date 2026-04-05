@@ -20,7 +20,7 @@ export function AppRouter() {
     <HashRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/about" element={<div className="min-h-screen bg-surface"><AboutPage /></div>} />
+        <Route path="/about" element={<AboutPage />} />
         <Route path="/table/:tableId" element={<TablePage />} />
         <Route element={<AuthGuard><PageShell /></AuthGuard>}>
           <Route path="/lobby" element={<LobbyPage />} />

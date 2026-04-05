@@ -16,19 +16,23 @@ export function CashierPage() {
   }, [fetchBalance, fetchTransactions]);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <h2 className="text-2xl font-extrabold text-white mb-7">Deposit & Withdraw</h2>
+    <div className="max-w-4xl mx-auto px-5 md:px-8 py-8">
+      <h2 className="text-2xl font-extrabold text-white mb-7">Cashier</h2>
 
-      <div className="bg-surface rounded-lg border border-surface-light/50 p-6 mb-6">
-        <p className="text-xs text-text-muted mb-1 uppercase tracking-wider font-bold">Your Balance</p>
+      {/* Balance card */}
+      <div className="bg-surface/60 rounded-xl border border-surface-light/25 p-6 mb-6">
+        <p className="text-[10px] text-text-muted mb-1 uppercase tracking-widest font-bold">
+          Your Balance
+        </p>
         {balance !== null ? (
           <p className="text-3xl font-extrabold text-green">{formatIsk(balance)}</p>
         ) : (
-          <div className="h-9 w-48 bg-surface-light rounded animate-pulse mt-1" />
+          <div className="h-9 w-48 bg-surface-light/40 rounded animate-pulse mt-1" />
         )}
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6 mb-6">
+      {/* Deposit / Withdraw */}
+      <div className="grid md:grid-cols-2 gap-4 mb-6">
         <DepositSection />
         {balance !== null && <WithdrawForm balance={balance} />}
       </div>
