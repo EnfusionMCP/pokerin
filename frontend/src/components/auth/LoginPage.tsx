@@ -52,7 +52,7 @@ export function LoginPage() {
   const login = () => { window.location.href = '/auth/login'; };
 
   return (
-    <div className="min-h-screen bg-base">
+    <div className="min-h-screen bg-base landing-bg">
       {/* ── Nav ── */}
       <nav className="fixed top-0 inset-x-0 z-50 h-16 flex items-center justify-between px-5 md:px-8 bg-base/80 backdrop-blur-md border-b border-white/[0.06]">
         <Link to="/" className="text-xl font-extrabold text-white tracking-tight">
@@ -97,9 +97,9 @@ export function LoginPage() {
       </nav>
 
       {/* ── Hero ── */}
-      <section className="relative pt-24 pb-6 px-5 md:px-8">
+      <section className="relative z-10 pt-24 pb-6 px-5 md:px-8 scan-lines">
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-[-200px] left-1/2 -translate-x-1/2 w-[900px] h-[700px] rounded-full bg-green/[0.03] blur-[120px]" />
+          <div className="absolute top-[-200px] left-1/2 -translate-x-1/2 w-[900px] h-[700px] rounded-full bg-green/[0.05] blur-[120px]" />
         </div>
         <div className="relative max-w-3xl mx-auto text-center">
           <h1 className="landing-reveal text-5xl md:text-7xl font-extrabold text-white tracking-tight mb-3" style={{ animationDelay: '0s' }}>
@@ -111,8 +111,26 @@ export function LoginPage() {
         </div>
       </section>
 
+      {/* ── Comms Ticker ── */}
+      <div className="relative z-10 ticker-strip py-2.5 mb-6">
+        <div className="ticker-content">
+          {[0, 1].map(i =>
+            ['This website sucks', 'nobody gonna give isk to some rando cunt who nobody knows', 'Taking a rake yeah no thanks', 'literally garbage', 'who even made this lmao', '0/10 would not recommend to anyone', 'Oh, I think it looks great honey.'].map((review, j) => {
+              const attr = review.startsWith('Oh,') ? 'My mom' : 'Anonymous';
+              return (
+                <span key={`${i}-${j}`} className="inline-block px-20">
+                  <span className="text-sm text-text/70 tracking-wide italic">&ldquo;{review}&rdquo;</span>
+                  <span className="text-text-muted/70 text-xs ml-2">&mdash; {attr}</span>
+                  <span className="text-green/25 text-xs ml-6">///</span>
+                </span>
+              );
+            })
+          )}
+        </div>
+      </div>
+
       {/* ── Live Tables ── */}
-      <section className="px-5 md:px-8 pb-20">
+      <section className="relative z-10 px-5 md:px-8 pb-20">
         <div className="max-w-5xl mx-auto">
           <div className="landing-reveal flex items-center justify-between mb-5" style={{ animationDelay: '0.22s' }}>
             <div className="flex items-center gap-2.5">
@@ -215,7 +233,7 @@ export function LoginPage() {
 
       {/* ── Trust Pillars — only for visitors ── */}
       {!isAuth && (
-        <section className="px-5 md:px-8 pb-20">
+        <section className="relative z-10 px-5 md:px-8 pb-20">
           <div className="max-w-3xl mx-auto grid md:grid-cols-3 gap-4">
             {[
               { icon: <svg className="w-5 h-5 text-green" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>, title: 'Provably Fair', text: 'Cryptographic RNG with verifiable server seeds. Audit any hand after it completes.' },
@@ -234,7 +252,7 @@ export function LoginPage() {
 
       {/* ── How It Works — only for visitors ── */}
       {!isAuth && (
-        <section className="px-5 md:px-8 pb-24">
+        <section className="relative z-10 px-5 md:px-8 pb-24">
           <div className="max-w-3xl mx-auto">
             <h2 className="text-xs font-bold text-text-muted text-center mb-8 uppercase tracking-widest">How It Works</h2>
             <div className="grid md:grid-cols-3 gap-8 md:gap-5">
@@ -256,7 +274,7 @@ export function LoginPage() {
       )}
 
       {/* ── Footer ── */}
-      <footer className="border-t border-surface-light/15 px-5 md:px-8 py-8">
+      <footer className="relative z-10 border-t border-surface-light/15 px-5 md:px-8 py-8">
         <div className="max-w-3xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-4">
             <span className="text-sm font-bold text-text-muted">pokerin<span className="text-green">.</span>space</span>
