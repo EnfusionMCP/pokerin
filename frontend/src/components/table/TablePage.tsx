@@ -30,7 +30,7 @@ export function TablePage() {
 
   useEffect(() => {
     if (lastError === 'Table not found') {
-      navigate(isAuth ? '/lobby' : '/login', { replace: true });
+      navigate('/', { replace: true });
     }
   }, [lastError, navigate, isAuth]);
 

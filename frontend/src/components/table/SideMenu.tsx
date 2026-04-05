@@ -23,9 +23,9 @@ export function SideMenu({ isOpen, onClose, spectator = false }: Props) {
               Stand Up
             </button>
           )}
-          <button onClick={() => { onClose(); navigate(spectator ? '/login' : '/lobby'); }}
+          <button onClick={() => { onClose(); navigate('/'); }}
             className="flex items-center gap-3 px-5 py-3 text-sm text-text hover:bg-surface-light hover:text-white transition-colors text-left font-semibold">
-            {spectator ? 'Back to Home' : 'Back to Lobby'}
+            Back to Tables
           </button>
           {spectator && (
             <button onClick={() => { window.location.href = '/auth/login'; }}

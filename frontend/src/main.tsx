@@ -15,7 +15,7 @@ if (tokenMatch) {
   } catch { /* malformed token */ }
   // Strip token from URL — replace (not push) to keep JWT out of history
   const cleanHash = hash.replace(/[?&]token=[^&]+/, '').replace(/\?$/, '');
-  history.replaceState(null, '', cleanHash || '#/lobby');
+  history.replaceState(null, '', cleanHash || '#/');
 } else {
   // Restore session from localStorage
   useAuthStore.getState().init();
