@@ -1,12 +1,12 @@
-import { useEffect, useState, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import type { TableInfo } from '../../types/api';
 import { formatBlinds, formatIskShort } from '../../lib/isk';
 
 export function LoginPage() {
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const tablesRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const load = () =>
@@ -83,7 +83,7 @@ export function LoginPage() {
           </p>
 
           <div
-            className="landing-reveal flex flex-col sm:flex-row items-center justify-center gap-3"
+            className="landing-reveal"
             style={{ animationDelay: '0.22s' }}
           >
             <button
@@ -96,12 +96,6 @@ export function LoginPage() {
                 className="w-5 h-5 opacity-70 group-hover:opacity-100 transition-opacity"
               />
               Login with EVE Online
-            </button>
-            <button
-              onClick={() => tablesRef.current?.scrollIntoView({ behavior: 'smooth' })}
-              className="px-5 py-3 border border-surface-light/60 text-text hover:text-white hover:border-surface-lighter rounded-lg font-semibold transition-all text-sm cursor-pointer"
-            >
-              View Tables
             </button>
           </div>
 
@@ -128,7 +122,7 @@ export function LoginPage() {
       </section>
 
       {/* ── Live Tables ── */}
-      <section ref={tablesRef} className="px-5 md:px-8 pb-20">
+      <section className="px-5 md:px-8 pb-20">
         <div className="max-w-3xl mx-auto">
           <div
             className="landing-reveal flex items-center gap-2.5 mb-5"
@@ -172,7 +166,8 @@ export function LoginPage() {
                   return (
                     <tr
                       key={t.table_id}
-                      className="border-b border-surface-light/15 last:border-0 hover:bg-surface-light/15 transition-colors"
+                      className="border-b border-surface-light/15 last:border-0 hover:bg-surface-light/15 transition-colors cursor-pointer"
+                      onClick={() => navigate(`/table/${t.table_id}`)}
                     >
                       <td className="py-3 px-4 md:px-5 text-white font-semibold">
                         {t.name}
@@ -214,15 +209,10 @@ export function LoginPage() {
                       </td>
                       <td className="py-3 px-4 md:px-5 text-right">
                         <button
-                          onClick={login}
-                          disabled={full}
-                          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                            full
-                              ? 'bg-surface-light/50 text-text-muted cursor-not-allowed'
-                              : 'bg-green/10 border border-green/25 text-green hover:bg-green/20 cursor-pointer'
-                          }`}
+                          onClick={(e) => { e.stopPropagation(); navigate(`/table/${t.table_id}`); }}
+                          className="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all bg-green/10 border border-green/25 text-green hover:bg-green/20 cursor-pointer"
                         >
-                          {full ? 'Full' : 'Play'}
+                          View
                         </button>
                       </td>
                     </tr>

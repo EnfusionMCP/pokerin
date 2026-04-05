@@ -1,6 +1,8 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
+import { useAuthStore } from '../../stores/authStore';
 import { useWebSocket } from '../../hooks/useWebSocket';
+import { useSpectatorPolling } from '../../hooks/useSpectatorPolling';
 import { useTableStore } from '../../stores/tableStore';
 import { formatIskCompact } from '../../lib/isk';
 import { PokerTable } from './PokerTable';
@@ -11,8 +13,12 @@ import { BottomToolbar } from './BottomToolbar';
 
 export function TablePage() {
   const { tableId } = useParams<{ tableId: string }>();
-  useWebSocket(tableId ?? '');
   const navigate = useNavigate();
+  const isAuth = useAuthStore((s) => s.isAuthenticated);
+
+  // Auth: WebSocket, Spectator: REST polling. One is always a no-op.
+  useWebSocket(isAuth ? (tableId ?? '') : '');
+  useSpectatorPolling(isAuth ? '' : (tableId ?? ''));
 
   const connected = useTableStore((s) => s.connected);
   const tableName = useTableStore((s) => s.tableName);
@@ -24,23 +30,25 @@ export function TablePage() {
 
   useEffect(() => {
     if (lastError === 'Table not found') {
-      navigate('/lobby', { replace: true });
+      navigate(isAuth ? '/lobby' : '/login', { replace: true });
     }
-  }, [lastError, navigate]);
+  }, [lastError, navigate, isAuth]);
 
   if (!tableId) return null;
 
   if (!connected && !tableName) {
     return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-60px)] bg-base gap-3">
+      <div className="flex flex-col items-center justify-center h-screen bg-base gap-3">
         <div className="w-8 h-8 border-2 border-green border-t-transparent rounded-full animate-spin" />
-        <div className="text-text-muted text-sm font-semibold">Connecting to table...</div>
+        <div className="text-text-muted text-sm font-semibold">
+          {isAuth ? 'Connecting to table...' : 'Loading table...'}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="h-[calc(100vh-60px)] bg-base flex flex-col relative">
+    <div className="h-screen bg-base flex flex-col relative">
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 py-2 bg-surface border-b border-surface-light/50">
         <div className="flex items-center gap-3">
@@ -61,24 +69,38 @@ export function TablePage() {
             </span>
           )}
         </div>
-        {handNum > 0 && (
-          <span className="text-xs text-text-muted font-semibold">#{handNum}</span>
-        )}
+        <div className="flex items-center gap-3">
+          {handNum > 0 && (
+            <span className="text-xs text-text-muted font-semibold">#{handNum}</span>
+          )}
+          {!isAuth && (
+            <button
+              onClick={() => { window.location.href = '/auth/login'; }}
+              className="flex items-center gap-2 px-3 py-1.5 bg-green text-black text-xs font-bold rounded-lg hover:brightness-110 transition-all cursor-pointer"
+            >
+              Login to Play
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Table area */}
       <div className="flex-1 flex items-center justify-center p-4">
-        <PokerTable />
+        <PokerTable spectator={!isAuth} />
       </div>
 
-      {/* Overlays */}
-      <ChatPanel />
-      <TableToggles />
+      {/* Overlays — only for authenticated users */}
+      {isAuth && (
+        <>
+          <ChatPanel />
+          <TableToggles />
+        </>
+      )}
       <BottomToolbar />
-      <SideMenu isOpen={menuOpen} onClose={() => setMenuOpen(false)} />
+      <SideMenu isOpen={menuOpen} onClose={() => setMenuOpen(false)} spectator={!isAuth} />
 
-      {/* Disconnected overlay */}
-      {!connected && tableName && (
+      {/* Disconnected overlay — only for authenticated (spectator polling handles its own state) */}
+      {isAuth && !connected && tableName && (
         <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-50 gap-3">
           <div className="text-white text-lg font-bold">Connection Lost</div>
           <div className="text-text-muted text-sm">Attempting to reconnect...</div>

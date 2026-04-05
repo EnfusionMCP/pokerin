@@ -17,7 +17,7 @@ import { ActionPanel } from './ActionPanel';
 import { PreActionBar } from './PreActionBar';
 import { SitDialog } from './SitDialog';
 
-export function PokerTable() {
+export function PokerTable({ spectator = false }: { spectator?: boolean }) {
   const seats = useTableStore((s) => s.seats);
   const community = useTableStore((s) => s.community);
   const pots = useTableStore((s) => s.pots);
@@ -51,8 +51,8 @@ export function PokerTable() {
     ? getDealerPosition(positions[dealer])
     : null;
 
-  // Can only sit if not already seated
-  const canSit = mySeat < 0 && maxBuyin > 0;
+  // Can only sit if not already seated and authenticated
+  const canSit = !spectator && mySeat < 0 && maxBuyin > 0;
 
   // (dealTargets removed — DealAnimation simplified to just show a deck flash)
 

@@ -21,9 +21,9 @@ export function AppRouter() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/about" element={<div className="min-h-screen bg-surface"><AboutPage /></div>} />
+        <Route path="/table/:tableId" element={<TablePage />} />
         <Route element={<AuthGuard><PageShell /></AuthGuard>}>
           <Route path="/lobby" element={<LobbyPage />} />
-          <Route path="/table/:tableId" element={<TablePage />} />
           <Route path="/cashier" element={<CashierPage />} />
           <Route path="/stats" element={<StatsPage />} />
           <Route path="/admin" element={<AdminPage />} />
