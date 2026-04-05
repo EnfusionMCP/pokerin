@@ -82,59 +82,38 @@ export function LoginPage() {
             Five stake levels from micro to whale. Provably fair, backed 1:1.
           </p>
 
-          <div
-            className="landing-reveal"
-            style={{ animationDelay: '0.22s' }}
-          >
-            <button
-              onClick={login}
-              className="group flex items-center gap-3 px-7 py-3 bg-green text-black font-bold rounded-lg hover:brightness-110 transition-all shadow-lg shadow-green/15 cursor-pointer"
-            >
-              <img
-                src="https://images.evetech.net/alliances/1/logo?size=64"
-                alt=""
-                className="w-5 h-5 opacity-70 group-hover:opacity-100 transition-opacity"
-              />
-              Login with EVE Online
-            </button>
-          </div>
-
-          {/* Live stats */}
-          <div
-            className="landing-reveal mt-10 flex items-center justify-center gap-6 text-sm"
-            style={{ animationDelay: '0.3s' }}
-          >
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green/75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-green" />
-              </span>
-              <span className="text-text-muted font-semibold">
-                <span className="text-white">{totalPlayers}</span>{' '}
-                {totalPlayers === 1 ? 'player' : 'players'} online
-              </span>
-            </div>
-            <span className="text-text-muted font-semibold">
-              <span className="text-white">{tables.length}</span> tables
-            </span>
-          </div>
         </div>
       </section>
 
       {/* ── Live Tables ── */}
       <section className="px-5 md:px-8 pb-20">
-        <div className="max-w-3xl mx-auto">
-          <div
-            className="landing-reveal flex items-center gap-2.5 mb-5"
-            style={{ animationDelay: '0.35s' }}
-          >
-            <h2 className="text-xs font-bold text-text-muted uppercase tracking-widest">
-              Live Tables
-            </h2>
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green/60" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green" />
-            </span>
+        <div className="max-w-5xl mx-auto">
+          {/* Stats + heading */}
+          <div className="landing-reveal flex items-center justify-between mb-5" style={{ animationDelay: '0.22s' }}>
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-sm font-bold text-text-muted uppercase tracking-widest">
+                Live Tables
+              </h2>
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green/60" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green" />
+              </span>
+            </div>
+            <div className="flex items-center gap-5 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green/75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green" />
+                </span>
+                <span className="text-text-muted font-semibold">
+                  <span className="text-white">{totalPlayers}</span>{' '}
+                  {totalPlayers === 1 ? 'player' : 'players'} online
+                </span>
+              </div>
+              <span className="text-text-muted font-semibold">
+                <span className="text-white">{tables.length}</span> tables
+              </span>
+            </div>
           </div>
 
           <div
