@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react';
 import { useTableStore } from '../../stores/tableStore';
 import { useLobbyStore } from '../../stores/lobbyStore';
-import { getPositions, getDealerPosition, getBetPosition } from '../../lib/positions';
+import { getPositions, getPositionsPortrait, getDealerPosition, getBetPosition } from '../../lib/positions';
 import { formatIskCompact } from '../../lib/isk';
 import { evaluateHandStrength } from '../../lib/handStrength';
 import { Felt } from './Felt';
@@ -44,7 +44,9 @@ export function PokerTable({ spectator = false }: { spectator?: boolean }) {
 
   const maxSeats = seats.length || 9;
   const heroSeat = mySeat >= 0 ? mySeat : 0;
-  const positions = getPositions(heroSeat, maxSeats);
+  // Use portrait layout on mobile (below md breakpoint = 768px), horizontal on desktop
+  const isPortrait = typeof window !== 'undefined' && window.innerWidth < 768;
+  const positions = isPortrait ? getPositionsPortrait(heroSeat, maxSeats) : getPositions(heroSeat, maxSeats);
 
   // Dealer button position
   const dealerPos = dealer >= 0 && dealer < maxSeats

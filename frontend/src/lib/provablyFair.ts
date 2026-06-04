@@ -39,7 +39,7 @@ export async function reproduceShuffle(
 ): Promise<string[]> {
   const keyBytes = hexToBytes(serverSeed);
   const cryptoKey = await crypto.subtle.importKey(
-    'raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+    'raw', keyBytes.buffer as ArrayBuffer, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   );
 
   const cards = [...ALL_CARDS];
@@ -47,12 +47,17 @@ export async function reproduceShuffle(
   let counter = 0;
 
   for (let i = cards.length - 1; i > 0; i--) {
-    const msg = encoder.encode(`${tableId}:${handNumber}:${counter}`);
-    const hmacResult = new Uint8Array(await crypto.subtle.sign('HMAC', cryptoKey, msg));
-    const value = (hmacResult[0] << 24) | (hmacResult[1] << 16) | (hmacResult[2] << 8) | hmacResult[3];
-    const j = (value >>> 0) % (i + 1);
+    const limit = Math.floor(0x100000000 / (i + 1)) * (i + 1);
+    let v: number;
+    while (true) {
+      const msg = encoder.encode(`${tableId}:${handNumber}:${counter}`);
+      const hmacResult = new Uint8Array(await crypto.subtle.sign('HMAC', cryptoKey, msg));
+      counter++;
+      v = (hmacResult[0] << 24) | (hmacResult[1] << 16) | (hmacResult[2] << 8) | hmacResult[3];
+      if ((v >>> 0) < limit) break;
+    }
+    const j = (v >>> 0) % (i + 1);
     [cards[i], cards[j]] = [cards[j], cards[i]];
-    counter++;
   }
 
   return cards;

@@ -50,6 +50,60 @@ export function getPositions(heroSeat: number, maxSeats: number = 9): SeatPositi
 }
 
 /**
+ * Portrait stadium felt positions for mobile — 8 villain seats at top arc, hero at bottom.
+ * Ellipse: rx=40%, ry=32%, center at (50%, 42%).
+ */
+const PORTRAIT_CX = 50;
+const PORTRAIT_CY = 42;
+const PORTRAIT_RX = 40;
+const PORTRAIT_RY = 32;
+
+function buildBasePortrait(n: number): SeatPosition[] {
+  // 8 seats distributed 10° to 170° (top arc only)
+  // Hero gets added at bottom, so n includes hero
+  const villainCount = n - 1;
+  const seats: SeatPosition[] = [];
+
+  // Villain seats on top arc (10° to 170°)
+  if (villainCount > 0) {
+    for (let i = 0; i < villainCount; i++) {
+      // Start at 10°, end at 170°
+      const angle = (10 + (160 * i) / (villainCount - 1)) * (Math.PI / 180);
+      seats.push({
+        x: PORTRAIT_CX + PORTRAIT_RX * Math.cos(angle),
+        y: PORTRAIT_CY - PORTRAIT_RY * Math.sin(angle),
+      });
+    }
+  }
+
+  // Hero at bottom (270° = 6 o'clock)
+  seats.push({
+    x: PORTRAIT_CX,
+    y: PORTRAIT_CY + PORTRAIT_RY,
+  });
+
+  return seats;
+}
+
+export function getPositionsPortrait(heroSeat: number, maxSeats: number = 9): SeatPosition[] {
+  const base = buildBasePortrait(maxSeats);
+  const positions: SeatPosition[] = [];
+  // Map actual seats to portrait layout — hero is always last in the built array
+  const villainCount = maxSeats - 1;
+  for (let i = 0; i < maxSeats; i++) {
+    if (i === heroSeat) {
+      // Hero goes to the last position (bottom center)
+      positions.push(base[villainCount]);
+    } else {
+      // Villains wrap around from hero position
+      const villainVisualIdx = (i - heroSeat + maxSeats - 1) % villainCount;
+      positions.push(base[villainVisualIdx]);
+    }
+  }
+  return positions;
+}
+
+/**
  * Get the position for a player's bet chip, floating between seat and center.
  */
 export function getBetPosition(seatPos: SeatPosition): SeatPosition {

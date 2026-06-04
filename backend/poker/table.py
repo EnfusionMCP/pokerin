@@ -286,10 +286,15 @@ class PokerTable:
         if len(active) < 2:
             return
 
-        # Find SB and BB positions
+        # Find SB and BB positions (C5 fix: don't default to 0 if dealer not active)
         dealer_idx = next(
-            (i for i, s in enumerate(active) if s.seat == self.dealer_seat), 0
+            (i for i, s in enumerate(active) if s.seat == self.dealer_seat), None
         )
+        if dealer_idx is None:
+            # Dealer not active — find first active seat after dealer position
+            dealer_idx = next(
+                (i for i, s in enumerate(active) if s.seat > self.dealer_seat), 0
+            )
 
         if len(active) == 2:
             # Heads-up: dealer posts SB, other posts BB
@@ -474,9 +479,14 @@ class PokerTable:
     def _preflop_first_actor(self) -> int:
         """First to act preflop = UTG (left of BB)."""
         active = [s for s in self.seats if s and s.is_active]
+        # C5 fix: don't default to 0 if dealer not active
         dealer_idx = next(
-            (i for i, s in enumerate(active) if s.seat == self.dealer_seat), 0
+            (i for i, s in enumerate(active) if s.seat == self.dealer_seat), None
         )
+        if dealer_idx is None:
+            dealer_idx = next(
+                (i for i, s in enumerate(active) if s.seat > self.dealer_seat), 0
+            )
         if len(active) == 2:
             return active[dealer_idx].seat  # heads-up: dealer acts first preflop
         return active[(dealer_idx + 3) % len(active)].seat
@@ -484,9 +494,14 @@ class PokerTable:
     def _postflop_first_actor(self) -> int:
         """First to act postflop = first active left of dealer."""
         active = [s for s in self.seats if s and s.is_active]
+        # C5 fix: don't default to 0 if dealer not active
         dealer_idx = next(
-            (i for i, s in enumerate(active) if s.seat == self.dealer_seat), 0
+            (i for i, s in enumerate(active) if s.seat == self.dealer_seat), None
         )
+        if dealer_idx is None:
+            dealer_idx = next(
+                (i for i, s in enumerate(active) if s.seat > self.dealer_seat), 0
+            )
         return active[(dealer_idx + 1) % len(active)].seat
 
     def _get_valid_actions(self, seat: PlayerSeat) -> list[ActionType]:
@@ -564,9 +579,12 @@ class PokerTable:
                 if new_bet > self.current_bet:
                     raise_inc = new_bet - self.current_bet
                     if raise_inc >= self.min_raise:
-                        # Full raise — reopens action
+                        # Full raise — reopens action (C1 fix: reset has_acted for all other active)
                         self.min_raise = raise_inc
                         self.last_raiser = seat.seat
+                        for s in self.seats:
+                            if s and s.is_active and s.seat != seat.seat:
+                                s.has_acted = False
                     self.current_bet = new_bet
                 seat.status = SeatStatus.ALL_IN
             else:
@@ -578,6 +596,10 @@ class PokerTable:
                 self.min_raise = amount - self.current_bet
                 self.current_bet = amount
                 self.last_raiser = seat.seat
+                # C1 fix: reset has_acted for all other active so action goes back around
+                for s in self.seats:
+                    if s and s.is_active and s.seat != seat.seat:
+                        s.has_acted = False
 
             seat.has_acted = True
 
@@ -587,9 +609,12 @@ class PokerTable:
             if seat.current_bet > self.current_bet:
                 raise_inc = seat.current_bet - self.current_bet
                 if raise_inc >= self.min_raise:
-                    # Full raise — reopens action
+                    # Full raise — reopens action (C1 fix: reset has_acted for all other active)
                     self.min_raise = raise_inc
                     self.last_raiser = seat.seat
+                    for s in self.seats:
+                        if s and s.is_active and s.seat != seat.seat:
+                            s.has_acted = False
                 self.current_bet = seat.current_bet
             seat.status = SeatStatus.ALL_IN
             seat.has_acted = True
@@ -775,6 +800,14 @@ class PokerTable:
             "server_seed": result["server_seed"],
         }
         await self._broadcast(broadcast)
+
+        # H10 fix: broadcast seat updates so stacks reflect immediately
+        for seat in self.seats:
+            if seat and seat.is_in_hand:
+                await self._broadcast({
+                    "type": ServerMsg.SEAT_UPDATE,
+                    **seat.to_public_dict(),
+                })
 
     async def _persist_hand(
         self, result: dict, starting_stacks: dict[int, int], hand_started: float

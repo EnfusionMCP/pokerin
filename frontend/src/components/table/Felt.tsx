@@ -3,8 +3,13 @@
 export function Felt({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className="relative w-full max-w-[1200px] mx-auto"
-      style={{ aspectRatio: '2.2 / 1' }}
+      className="relative w-full max-w-[1200px] mx-auto md:aspect-[2.2/1]"
+      style={{
+        // Desktop: fixed aspect ratio
+        // Mobile: fill viewport height
+        aspectRatio: undefined,
+        height: 'auto',
+      }}
     >
       {/* Dark outer rail */}
       <div

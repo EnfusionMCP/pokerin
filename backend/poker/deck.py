@@ -11,17 +11,21 @@ def _hmac_shuffle(cards: list[Card], seed_hex: str, table_id: str, hand_number: 
     """Fisher-Yates shuffle driven by HMAC-SHA256 in counter mode.
 
     For each swap step i (51 down to 1):
-      msg = "{table_id}:{hand_number}:{counter}" as UTF-8
-      h   = HMAC-SHA256(key=seed_raw_bytes, msg=msg)
-      j   = first 4 bytes of h as big-endian uint32, mod (i+1)
+      Rejection sampling to ensure unbiased distribution:
+      Compute until h[:4] < floor(2^32 / (i+1)) * (i+1), then j = h[:4] % (i+1)
     """
     key = bytes.fromhex(seed_hex)
     counter = 0
     for i in range(len(cards) - 1, 0, -1):
-        h = hmac.new(key, f"{table_id}:{hand_number}:{counter}".encode(), hashlib.sha256).digest()
-        j = int.from_bytes(h[:4], "big") % (i + 1)
+        limit = (0x100000000 // (i + 1)) * (i + 1)
+        while True:
+            h = hmac.new(key, f"{table_id}:{hand_number}:{counter}".encode(), hashlib.sha256).digest()
+            counter += 1
+            v = int.from_bytes(h[:4], "big")
+            if v < limit:
+                j = v % (i + 1)
+                break
         cards[i], cards[j] = cards[j], cards[i]
-        counter += 1
 
 
 class Deck:
