@@ -20,6 +20,10 @@ class PlayerSeat:
     total_bet: int = 0          # total contributed this hand
     has_acted: bool = False     # acted this betting round
 
+    # Timeout / bank-time escalation
+    bank_time_used: bool = False   # one-shot extra time, per session at the table
+    sit_out_hands: int = 0         # consecutive hands sat out (kicked at 3)
+
     # For display
     portrait_url: str = ""
 
@@ -29,6 +33,7 @@ class PlayerSeat:
         self.current_bet = 0
         self.total_bet = 0
         self.has_acted = False
+        self.sit_out_hands = 0  # being dealt in clears any sit-out streak
         if self.status != SeatStatus.SITTING_OUT:
             self.status = SeatStatus.ACTIVE
 

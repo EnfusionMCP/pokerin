@@ -16,6 +16,7 @@ RATE_LIMITS = [
     ("/auth/", 20, 60),        # 20 auth requests per minute
     ("/api/admin/", 60, 60),   # 60 admin requests per minute
     ("/api/withdraw", 5, 60),  # 5 withdrawal requests per minute
+    ("/api/verify", 10, 60),   # F3 fix: unauth CPU-heavy deck reproduction
 ]
 
 # IP -> path_prefix -> list of timestamps

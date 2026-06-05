@@ -3,7 +3,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,9 +18,11 @@ router = APIRouter(prefix="/api", tags=["history"])
 
 
 class VerifyRequest(BaseModel):
-    server_seed: str
-    table_id: str
-    hand_number: int
+    # F3 fix: bound inputs so a single call can't be made arbitrarily expensive.
+    # server_seed is always 32 bytes of hex (64 chars); table_id is a short slug.
+    server_seed: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+    table_id: str = Field(max_length=64)
+    hand_number: int = Field(ge=0, le=100_000_000)
 
 
 @router.post("/verify")

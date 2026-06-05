@@ -5,12 +5,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import get_session
 from ..deps import get_current_user
+from ..models.ledger import Transaction
 from ..models.user import User
 from . import jwt as app_jwt
 from .sso import build_auth_url, exchange_code, parse_character_from_jwt
@@ -31,6 +32,7 @@ async def login():
 async def callback(
     code: str,
     state: str,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ):
     """Handle EVE SSO callback — exchange code, upsert user, issue app JWT."""
@@ -66,6 +68,52 @@ async def callback(
         session.add(user)
         await session.flush()
         log.info("New user created: %s (char %d)", character_name, character_id)
+
+        # Signup bonus — first 50 real players get 50M ISK (one per IP)
+        BONUS_LIMIT = 50
+        BONUS_ISK_CENTS = 5_000_000_000  # 50M ISK × 100
+
+        client_ip = (
+            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or request.client.host
+        )
+
+        # How many bonuses have been given out?
+        bonus_count_result = await session.execute(
+            select(func.count()).select_from(Transaction).where(
+                Transaction.type == "admin_credit",
+                Transaction.reference_id.like("signup_bonus_%"),
+            )
+        )
+        bonuses_given = bonus_count_result.scalar()
+
+        # Has this IP already claimed one?
+        ip_dupe_result = await session.execute(
+            select(Transaction.id).where(
+                Transaction.type == "admin_credit",
+                Transaction.reference_id == f"signup_bonus::{client_ip}",
+            ).limit(1)
+        )
+        ip_already_claimed = ip_dupe_result.scalar_one_or_none() is not None
+
+        if bonuses_given < BONUS_LIMIT and not ip_already_claimed:
+            user.balance = BONUS_ISK_CENTS
+            session.add(Transaction(
+                user_id=user.id,
+                type="admin_credit",
+                amount=BONUS_ISK_CENTS,
+                balance_after=BONUS_ISK_CENTS,
+                reference_id=f"signup_bonus::{client_ip}",
+            ))
+            log.info(
+                "Signup bonus: 50M ISK credited to %s (bonus #%d of %d, ip=%s)",
+                character_name, bonuses_given + 1, BONUS_LIMIT, client_ip,
+            )
+        elif ip_already_claimed:
+            log.info(
+                "Signup bonus skipped for %s — IP %s already claimed",
+                character_name, client_ip,
+            )
     else:
         user.character_name = character_name
         user.portrait_url = portrait_url

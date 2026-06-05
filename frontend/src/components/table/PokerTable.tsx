@@ -1,6 +1,6 @@
 /** Main poker table — composes felt, seats, cards, pot, dealer, actions */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useTableStore } from '../../stores/tableStore';
 import { useLobbyStore } from '../../stores/lobbyStore';
 import { getPositions, getPositionsPortrait, getDealerPosition, getBetPosition } from '../../lib/positions';
@@ -44,8 +44,20 @@ export function PokerTable({ spectator = false }: { spectator?: boolean }) {
 
   const maxSeats = seats.length || 9;
   const heroSeat = mySeat >= 0 ? mySeat : 0;
-  // Use portrait layout on mobile (below md breakpoint = 768px), horizontal on desktop
-  const isPortrait = typeof window !== 'undefined' && window.innerWidth < 768;
+  // Use portrait layout on mobile (below md breakpoint = 768px), horizontal on desktop.
+  // Track viewport so rotation / resize re-lays-out the table.
+  const [isPortrait, setIsPortrait] = useState(
+    typeof window !== 'undefined' && window.innerWidth < 768,
+  );
+  useEffect(() => {
+    const onResize = () => setIsPortrait(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, []);
   const positions = isPortrait ? getPositionsPortrait(heroSeat, maxSeats) : getPositions(heroSeat, maxSeats);
 
   // Dealer button position
@@ -96,6 +108,7 @@ export function PokerTable({ spectator = false }: { spectator?: boolean }) {
   const phase = useTableStore((s) => s.phase);
   const promptTimerStart = useTableStore((s) => s.promptTimerStart);
   const actionTimeout = useTableStore((s) => s.actionTimeout);
+  const bankTimeSeat = useTableStore((s) => s.bankTimeSeat);
   const collectingBets = useTableStore((s) => s.collectingBets);
 
   // Hand strength indicator
@@ -180,6 +193,7 @@ export function PokerTable({ spectator = false }: { spectator?: boolean }) {
             profit={winnerProfits[i]}
             timerStart={i === actionOn ? promptTimerStart : null}
             timerTimeout={actionTimeout}
+            bankTimeActive={i === bankTimeSeat}
             onClickEmpty={canSit ? () => setSitSeat(i) : undefined}
             onShowCards={() => send?.({ type: 'chat', text: '/show' })}
           />

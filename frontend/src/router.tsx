@@ -7,6 +7,7 @@ import { TablePage } from './components/table/TablePage';
 import { AdminPage } from './components/admin/AdminPage';
 import { StatsPage } from './components/stats/StatsPage';
 import { AboutPage } from './components/about/AboutPage';
+import { ProvablyFairPage } from './components/fair/ProvablyFairPage';
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -22,6 +23,7 @@ export function AppRouter() {
         <Route path="/login" element={<Navigate to="/" replace />} />
         <Route path="/lobby" element={<Navigate to="/" replace />} />
         <Route path="/about" element={<AboutPage />} />
+        <Route path="/fair" element={<ProvablyFairPage />} />
         <Route path="/table/:tableId" element={<TablePage />} />
         <Route element={<AuthGuard><PageShell /></AuthGuard>}>
           <Route path="/cashier" element={<CashierPage />} />

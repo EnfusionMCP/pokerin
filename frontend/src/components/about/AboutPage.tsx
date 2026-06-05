@@ -6,25 +6,24 @@ export function AboutPage() {
 
   return (
     <div className="min-h-screen bg-base">
-      {/* Nav — only for unauthenticated (auth users have the PageShell header) */}
-      {!isAuth && (
-        <nav className="sticky top-0 z-40 flex items-center justify-between px-5 md:px-8 h-14 bg-base/80 backdrop-blur-md border-b border-white/[0.06]">
-          <Link to="/login" className="text-lg font-extrabold text-white tracking-tight hover:text-green transition-colors">
-            pokerin<span className="text-green">.</span>space
+      <nav className="sticky top-0 z-40 flex items-center justify-between px-5 md:px-8 h-14 bg-base/80 backdrop-blur-md border-b border-white/[0.06]">
+        <Link to="/" className="text-lg font-extrabold text-white tracking-tight hover:text-green transition-colors">
+          pokerin<span className="text-green">.</span>space
+        </Link>
+        <div className="flex items-center gap-5">
+          <Link to="/" className="text-sm text-text-muted hover:text-text transition-colors font-semibold">
+            Home
           </Link>
-          <div className="flex items-center gap-5">
-            <Link to="/login" className="text-sm text-text-muted hover:text-text transition-colors font-semibold">
-              Home
-            </Link>
+          {!isAuth && (
             <button
               onClick={() => { window.location.href = '/auth/login'; }}
               className="flex items-center gap-2 px-4 py-2 bg-green/10 border border-green/25 rounded-lg text-green text-sm font-bold hover:bg-green/20 transition-all cursor-pointer"
             >
               Login with EVE
             </button>
-          </div>
-        </nav>
-      )}
+          )}
+        </div>
+      </nav>
 
       <div className="max-w-3xl mx-auto px-5 md:px-8 py-10">
         <h1 className="text-3xl font-extrabold text-white mb-10">

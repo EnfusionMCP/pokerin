@@ -122,6 +122,13 @@ export interface ActionOnMsg {
   timeout: number;
 }
 
+export interface BankTimeStartMsg {
+  type: 'bank_time_start';
+  seat: number;
+  user_id: number;
+  duration: number;
+}
+
 export interface ErrorMsg {
   type: 'error';
   message: string;
@@ -135,6 +142,7 @@ export type ServerMessage =
   | PlayerActionMsg
   | ActionPromptMsg
   | ActionOnMsg
+  | BankTimeStartMsg
   | HandResultMsg
   | SeatUpdateMsg
   | ChatMsg

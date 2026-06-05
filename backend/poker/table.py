@@ -29,6 +29,8 @@ from ..ws.protocol import ServerMsg
 log = logging.getLogger(__name__)
 
 ACTION_TIMEOUT = 30.0  # seconds per action
+BANK_TIME = 15.0       # one-shot extra time when the base timer expires
+SIT_OUT_KICK_HANDS = 3  # consecutive sat-out hands before a player is removed
 MIN_PLAYERS = 2
 
 
@@ -81,6 +83,9 @@ class PokerTable:
         self._shutdown = asyncio.Event()
         # Track disconnected user IDs for cleanup between hands (BUG B fix)
         self._disconnected_users: set[int] = set()
+        # Players who timed out with no bank time left — moved to SITTING_OUT
+        # at the start of the next hand.
+        self._auto_sitout: set[int] = set()
         # Bot user IDs — these are never cleaned up by _cleanup_disconnected
         self._bot_users: set[int] = set()
 
@@ -232,18 +237,30 @@ class PokerTable:
             # Always clear stale bet data regardless of status
             seat.current_bet = 0
             seat.total_bet = 0
+            # Item 7: players who exhausted their bank time and timed out are
+            # moved to sitting-out for this and subsequent hands.
+            if seat.user_id in self._auto_sitout:
+                seat.status = SeatStatus.SITTING_OUT
+                self._auto_sitout.discard(seat.user_id)
             # BUG B fix: disconnected players don't get dealt into next hand
             if seat.user_id in self._disconnected_users:
                 seat.status = SeatStatus.SITTING_OUT
+            if seat.status == SeatStatus.SITTING_OUT:
+                # Count the sit-out streak — _cleanup_disconnected kicks at the cap.
+                seat.sit_out_hands += 1
                 continue
-            if seat.status != SeatStatus.SITTING_OUT:
-                if seat.stack > 0:
-                    seat.reset_for_hand()
-                else:
-                    seat.status = SeatStatus.SITTING_OUT
+            if seat.stack > 0:
+                seat.reset_for_hand()  # resets sit_out_hands to 0
+            else:
+                seat.status = SeatStatus.SITTING_OUT
+                seat.sit_out_hands += 1
 
     async def _cleanup_disconnected(self) -> None:
-        """Remove disconnected players who aren't in a hand. Credits stack to bank."""
+        """Remove players who aren't in a hand. Credits stack to bank.
+
+        Two removal triggers: a disconnected player (no WS connection), or a
+        player who has sat out too many consecutive hands (item 7 kick).
+        """
         if self.phase not in (HandPhase.IDLE, HandPhase.COMPLETE):
             return
         connected = self.conn.get_connected_users(self.table_id)
@@ -251,19 +268,32 @@ class PokerTable:
             if seat and seat.status == SeatStatus.SITTING_OUT:
                 if seat.user_id in self._bot_users:
                     continue  # bots don't need WS connections
-                if seat.user_id not in connected:
+                disconnected = seat.user_id not in connected
+                kicked = seat.sit_out_hands >= SIT_OUT_KICK_HANDS
+                if disconnected or kicked:
                     uid = seat.user_id
+                    reason = "disconnect" if disconnected else "sitout-kick"
                     # Credit remaining stack back to bank before removing
                     if seat.stack > 0 and self._bank:
                         try:
                             await self._bank.credit(uid, seat.stack, tx_type="cashout",
-                                                     reference_id=f"table:{self.table_id}:disconnect")
-                            log.info("Credited %d to user %d on disconnect cleanup", seat.stack, uid)
+                                                     reference_id=f"table:{self.table_id}:{reason}")
+                            log.info("Credited %d to user %d on %s cleanup", seat.stack, uid, reason)
                         except Exception as e:
-                            log.error("Failed to credit disconnect stack: user=%d amount=%d: %s", uid, seat.stack, e)
+                            log.error("Failed to credit cleanup stack: user=%d amount=%d: %s", uid, seat.stack, e)
                     self.seats[i] = None
                     self._action_queues.pop(uid, None)
                     self._disconnected_users.discard(uid)
+                    self._auto_sitout.discard(uid)
+                    if kicked and not disconnected:
+                        await self.conn.send_to_player(self.table_id, uid, {
+                            "type": ServerMsg.ERROR,
+                            "message": "Removed from table after sitting out 3 hands",
+                        })
+                    await self._broadcast({
+                        "type": ServerMsg.SEAT_UPDATE,
+                        "seat": i, "user_id": None, "status": "empty",
+                    })
 
     def _advance_dealer(self) -> None:
         """Move dealer button to next occupied seat."""
@@ -313,8 +343,10 @@ class PokerTable:
         if bb_player.stack == 0:
             bb_player.status = SeatStatus.ALL_IN
 
-        # Bug 5 fix: use actual BB bet (may be less if short-stacked)
-        self.current_bet = bb_player.current_bet
+        # C3 fix: a short all-in BB does NOT lower the street betting line.
+        # The full big blind remains the amount to match; the BB's partial
+        # contribution is already recorded and reconciled by side-pot logic.
+        self.current_bet = self.config.big_blind
         self.min_raise = self.config.big_blind
 
     def _deal_hole_cards(self) -> None:
@@ -443,13 +475,20 @@ class PokerTable:
                      action.action.value, action.amount)
             self._apply_action(seat, action)
 
+            # S4 fix: report the amount actually committed, not what was requested
+            # (raises get bumped/clamped). For fold/check there is no amount.
+            if action.action in (ActionType.FOLD, ActionType.CHECK):
+                committed_amount = 0
+            else:
+                committed_amount = seat.current_bet
+
             # Record for hand history
             self._hand_actions.append({
                 "user_id": seat.user_id,
                 "seat": seat.seat,
                 "street": self.street.value,
                 "action": action.action.value,
-                "amount": action.amount,
+                "amount": committed_amount,
                 "order": self._action_order,
             })
             self._action_order += 1
@@ -465,7 +504,7 @@ class PokerTable:
                 "seat": seat.seat,
                 "user_id": seat.user_id,
                 "action": action.action.value,
-                "amount": action.amount,
+                "amount": committed_amount,
                 "stack": seat.stack,
                 "current_bet": seat.current_bet,
                 "status": seat.status.value,
@@ -537,17 +576,46 @@ class PokerTable:
             except asyncio.QueueEmpty:
                 break
 
+        seat = next((s for s in self.seats if s and s.user_id == user_id), None)
+
+        # Base timer.
         try:
-            action = await asyncio.wait_for(queue.get(), timeout=ACTION_TIMEOUT)
-            return action
+            return await asyncio.wait_for(queue.get(), timeout=ACTION_TIMEOUT)
         except asyncio.TimeoutError:
-            # Auto-check if free, otherwise fold
-            seat = next((s for s in self.seats if s and s.user_id == user_id), None)
-            if seat and self.current_bet <= seat.current_bet:
-                log.info("Player %d timed out — auto-check", user_id)
-                return PlayerAction(action=ActionType.CHECK, user_id=user_id)
-            log.info("Player %d timed out — auto-fold", user_id)
-            return PlayerAction(action=ActionType.FOLD, user_id=user_id)
+            pass
+
+        # Base timer expired. Item 7 escalation:
+        # 1) If the player still has their one-shot bank time, grant the
+        #    extension and wait again. Bank time expiring just folds this turn.
+        # 2) Otherwise fold AND mark the player to sit out from the next hand.
+        is_bot = seat is not None and seat.user_id in self._bot_users
+        if seat is not None and not seat.bank_time_used and not is_bot:
+            seat.bank_time_used = True
+            await self._broadcast({
+                "type": ServerMsg.BANK_TIME_START,
+                "seat": seat.seat,
+                "user_id": user_id,
+                "duration": BANK_TIME,
+            })
+            log.info("Player %d using bank time (%.0fs)", user_id, BANK_TIME)
+            try:
+                return await asyncio.wait_for(queue.get(), timeout=BANK_TIME)
+            except asyncio.TimeoutError:
+                # Bank time gone — auto-check if free, else fold. Keep the seat.
+                if self.current_bet <= seat.current_bet:
+                    log.info("Player %d bank time expired — auto-check", user_id)
+                    return PlayerAction(action=ActionType.CHECK, user_id=user_id)
+                log.info("Player %d bank time expired — auto-fold", user_id)
+                return PlayerAction(action=ActionType.FOLD, user_id=user_id)
+
+        # No bank time left — fold and sit the player out from the next hand.
+        if seat is not None and not is_bot:
+            self._auto_sitout.add(user_id)
+            log.info("Player %d timed out, no bank time — auto-fold + sit out", user_id)
+        if seat is not None and self.current_bet <= seat.current_bet and is_bot:
+            # Bots never accrue sit-out; keep the old auto-check-if-free behavior.
+            return PlayerAction(action=ActionType.CHECK, user_id=user_id)
+        return PlayerAction(action=ActionType.FOLD, user_id=user_id)
 
     def _apply_action(self, seat: PlayerSeat, action: PlayerAction) -> None:
         """Apply a player's action to the table state."""
@@ -588,18 +656,37 @@ class PokerTable:
                     self.current_bet = new_bet
                 seat.status = SeatStatus.ALL_IN
             else:
-                # Normal raise
+                # Normal raise — bump undersize raises up to the legal minimum
                 if amount < self.current_bet + self.min_raise:
                     amount = self.current_bet + self.min_raise
-                bet_needed = amount - seat.current_bet
-                self._force_bet(seat, bet_needed)
-                self.min_raise = amount - self.current_bet
-                self.current_bet = amount
-                self.last_raiser = seat.seat
-                # C1 fix: reset has_acted for all other active so action goes back around
-                for s in self.seats:
-                    if s and s.is_active and s.seat != seat.seat:
-                        s.has_acted = False
+                # S4 fix: a short stack may not cover the bumped target. Clamp to
+                # the stack and treat it as an all-in instead of silently setting
+                # current_bet to an amount the player never reached.
+                max_total = seat.stack + seat.current_bet
+                if amount >= max_total:
+                    self._force_bet(seat, seat.stack)
+                    new_bet = seat.current_bet
+                    if new_bet > self.current_bet:
+                        raise_inc = new_bet - self.current_bet
+                        if raise_inc >= self.min_raise:
+                            # Full raise — reopens action
+                            self.min_raise = raise_inc
+                            self.last_raiser = seat.seat
+                            for s in self.seats:
+                                if s and s.is_active and s.seat != seat.seat:
+                                    s.has_acted = False
+                        self.current_bet = new_bet
+                    seat.status = SeatStatus.ALL_IN
+                else:
+                    bet_needed = amount - seat.current_bet
+                    self._force_bet(seat, bet_needed)
+                    self.min_raise = amount - self.current_bet
+                    self.current_bet = amount
+                    self.last_raiser = seat.seat
+                    # C1 fix: reset has_acted for all other active so action reopens
+                    for s in self.seats:
+                        if s and s.is_active and s.seat != seat.seat:
+                            s.has_acted = False
 
             seat.has_acted = True
 
@@ -704,24 +791,37 @@ class PokerTable:
 
         # BUG 11 fix: calculate total pot first, apply rake cap once on total
         total_pot = sum(p.amount for p in pots)
-        uncapped_rake = self._rake.calculate(total_pot, self.saw_flop)
-        # Distribute rake proportionally across pots
-        total_rake = uncapped_rake
+        target_rake = self._rake.calculate(total_pot, self.saw_flop)
         winners_list = []
         shown = {}
 
-        # Pre-compute per-pot rake with remainder assigned to last pot (BUG G fix)
-        pot_rakes: list[int] = []
-        rake_assigned = 0
-        for i, pot in enumerate(pots):
-            if total_pot > 0 and i < len(pots) - 1:
-                pr = (pot.amount * total_rake) // total_pot
-            elif total_pot > 0:
-                pr = total_rake - rake_assigned  # last pot gets remainder
-            else:
-                pr = 0
-            pot_rakes.append(pr)
-            rake_assigned += pr
+        # Distribute the rake across pots proportionally. Critical: a pot's rake
+        # can NEVER exceed the pot's own amount, or the winner of a tiny pot would
+        # be charged more than the pot holds and go negative. Floor each pot's
+        # share, cap it at the pot amount, then spill the leftover (from flooring
+        # and capping) one chip at a time into the pots with remaining room,
+        # largest-first. The actual total rake is the sum of what was taken.
+        pot_rakes: list[int] = [0] * len(pots)
+        if total_pot > 0 and target_rake > 0:
+            assigned = 0
+            for i, pot in enumerate(pots):
+                pr = min((pot.amount * target_rake) // total_pot, pot.amount)
+                pot_rakes[i] = pr
+                assigned += pr
+            leftover = target_rake - assigned
+            order = sorted(range(len(pots)), key=lambda i: pots[i].amount, reverse=True)
+            while leftover > 0:
+                progressed = False
+                for i in order:
+                    if leftover <= 0:
+                        break
+                    if pot_rakes[i] < pots[i].amount:
+                        pot_rakes[i] += 1
+                        leftover -= 1
+                        progressed = True
+                if not progressed:
+                    break  # no pot can absorb more rake than it holds
+        total_rake = sum(pot_rakes)
 
         # Bug 2 fix: if a side pot has no eligible players (all folded),
         # carry its chips forward to the next pot that does have eligible players.
@@ -954,8 +1054,12 @@ class PokerTable:
     async def _stand_up_inner(self, user_id: int) -> None:
         for i, seat in enumerate(self.seats):
             if seat and seat.user_id == user_id:
-                # Mid-hand: fold and queue for removal after hand ends
-                if seat.is_in_hand and self.phase not in (HandPhase.IDLE, HandPhase.COMPLETE):
+                # Mid-hand: defer removal until the hand ends. S3 fix — this must
+                # also cover a player who has already FOLDED but still has chips in
+                # the live pot (total_bet > 0). Nulling that seat now would erase
+                # those chips from _calculate_current_pots and shrink the pot.
+                mid_hand = self.phase not in (HandPhase.IDLE, HandPhase.COMPLETE)
+                if mid_hand and (seat.is_in_hand or seat.total_bet > 0):
                     self._disconnected_users.add(user_id)
                     # Inject fold so _wait_for_action unblocks immediately
                     if seat.is_active:
@@ -991,17 +1095,22 @@ class PokerTable:
 
     async def handle_player_action(self, user_id: int, raw: dict) -> None:
         """Handle an action message from a player."""
-        action_str = raw.get("action", "fold")
         # BUG 18 fix: coerce amount to int, default 0
         try:
             amount = max(0, int(raw.get("amount", 0)))
         except (TypeError, ValueError):
             amount = 0
 
+        # M3 fix: a garbled/missing action must NOT silently fold an attentive
+        # player. Reject it and let the action timeout be the only auto-fold path.
+        action_str = raw.get("action")
         try:
             action_type = ActionType(action_str)
         except ValueError:
-            action_type = ActionType.FOLD
+            await self.conn.send_to_player(self.table_id, user_id, {
+                "type": ServerMsg.ERROR, "message": "Invalid action",
+            })
+            return
 
         action = PlayerAction(action=action_type, amount=amount, user_id=user_id)
         # Route to per-player queue (BUG A fix)

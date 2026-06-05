@@ -29,6 +29,7 @@ export function Header() {
         <NavLink to="/">Tables</NavLink>
         <NavLink to="/cashier">Cashier</NavLink>
         <NavLink to="/stats">Stats</NavLink>
+        <NavLink to="/fair">Fair</NavLink>
         <NavLink to="/about">About</NavLink>
         {isAdmin && <NavLink to="/admin">Admin</NavLink>}
 

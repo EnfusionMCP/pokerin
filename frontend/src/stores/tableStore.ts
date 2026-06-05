@@ -45,6 +45,7 @@ interface TableState {
   prompt: ActionPromptMsg | null;
   promptTimerStart: number | null;
   actionTimeout: number;
+  bankTimeSeat: number | null;  // seat currently on its one-shot bank time
 
   // Showdown
   shownCards: Record<string, CardStr[]>;
@@ -120,6 +121,7 @@ const INITIAL_STATE = {
   prompt: null as ActionPromptMsg | null,
   promptTimerStart: null as number | null,
   actionTimeout: 30,
+  bankTimeSeat: null as number | null,
   shownCards: {} as Record<string, CardStr[]>,
   winners: [] as WinnerInfo[],
   lastActions: {} as Record<number, LastAction>,
@@ -170,6 +172,7 @@ export const useTableStore = create<TableState>((set, get) => ({
           lastActions: {},
           prompt: null,
           promptTimerStart: null,
+          bankTimeSeat: null,
         });
         break;
 
@@ -198,6 +201,7 @@ export const useTableStore = create<TableState>((set, get) => ({
           lastActions: {},
           prompt: null,
           promptTimerStart: null,
+          bankTimeSeat: null,
           dealKey: state.dealKey + 1,
           handStartStacks: stacks,
           preAction: state.sitOutNext ? 'fold' : state.foldToAnyBet ? 'check_fold' : null,
@@ -322,6 +326,7 @@ export const useTableStore = create<TableState>((set, get) => ({
         set({
           prompt: msg,
           promptTimerStart: Date.now(),
+          bankTimeSeat: null,
           preAction: null, // clear pre-action when prompt shows
         });
         break;
@@ -376,6 +381,17 @@ export const useTableStore = create<TableState>((set, get) => ({
           actionOn: msg.seat,
           promptTimerStart: Date.now(),
           actionTimeout: msg.timeout ?? 30,
+          bankTimeSeat: null,  // fresh turn → base timer
+        });
+        break;
+
+      case 'bank_time_start':
+        // The base timer expired; restart the ring (amber) for the bank window.
+        set({
+          actionOn: msg.seat,
+          promptTimerStart: Date.now(),
+          actionTimeout: msg.duration ?? 15,
+          bankTimeSeat: msg.seat,
         });
         break;
 

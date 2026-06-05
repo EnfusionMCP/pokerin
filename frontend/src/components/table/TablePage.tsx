@@ -4,6 +4,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { useSpectatorPolling } from '../../hooks/useSpectatorPolling';
 import { useTableStore } from '../../stores/tableStore';
+import { useLobbyStore } from '../../stores/lobbyStore';
 import { formatIskCompact } from '../../lib/isk';
 import { PokerTable } from './PokerTable';
 import { ChatPanel } from './ChatPanel';
@@ -27,6 +28,14 @@ export function TablePage() {
   const handNum = useTableStore((s) => s.handNum);
 
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Populate the lobby store so PokerTable's buy-in bounds (min/max) are real
+  // rather than the blinds-based fallback. Without this the table route never
+  // fetches table configs and SitDialog/rebuy use approximations.
+  const fetchTables = useLobbyStore((s) => s.fetchTables);
+  useEffect(() => {
+    fetchTables();
+  }, [fetchTables]);
 
   useEffect(() => {
     if (lastError === 'Table not found') {

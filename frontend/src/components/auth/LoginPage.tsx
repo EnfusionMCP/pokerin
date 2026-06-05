@@ -115,7 +115,7 @@ export function LoginPage() {
       <div className="relative z-10 ticker-strip py-2.5 mb-6">
         <div className="ticker-content">
           {[0, 1].map(i =>
-            ['This website sucks', 'nobody gonna give isk to some rando cunt who nobody knows', 'Taking a rake yeah no thanks', 'literally garbage', 'who even made this lmao', '0/10 would not recommend to anyone', 'Oh, I think it looks great honey.'].map((review, j) => {
+            ['This website sucks', 'nobody gonna give isk to some rando who nobody knows', 'Taking a rake yeah no thanks', 'literally garbage', 'who even made this lmao', '0/10 would not recommend to anyone', 'Oh, I think it looks great honey.'].map((review, j) => {
               const attr = review.startsWith('Oh,') ? 'My mom' : 'Anonymous';
               return (
                 <span key={`${i}-${j}`} className="inline-block px-20">
@@ -252,7 +252,7 @@ export function LoginPage() {
 
       {/* ── How It Works — only for visitors ── */}
       {!isAuth && (
-        <section className="relative z-10 px-5 md:px-8 pb-24">
+        <section className="relative z-10 px-5 md:px-8 pb-10 md:pb-24">
           <div className="max-w-3xl mx-auto">
             <h2 className="text-xs font-bold text-text-muted text-center mb-8 uppercase tracking-widest">How It Works</h2>
             <div className="grid md:grid-cols-3 gap-8 md:gap-5">
