@@ -20,7 +20,7 @@ export function CommunityCards({ cards }: Props) {
   if (cards.length === 0) return null;
 
   return (
-    <div className="absolute left-1/2 top-[50%] -translate-x-1/2 -translate-y-1/2 flex gap-1.5">
+    <div className="absolute left-1/2 top-[50%] -translate-x-1/2 -translate-y-1/2 flex gap-1.5 scale-[0.6] md:scale-100">
       {cards.map((c, i) => (
         <div
           key={c}

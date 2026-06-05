@@ -10,3 +10,7 @@ build/
 node_modules/
 bank_token.json
 bot_tokens.json
+
+# local dev artifacts
+dev.db
+shots/

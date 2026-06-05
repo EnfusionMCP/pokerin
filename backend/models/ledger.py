@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..db import Base
@@ -17,7 +17,10 @@ class Transaction(Base):
     """
     __tablename__ = "transactions"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    # BigInteger on Postgres; Integer on SQLite so the PK auto-increments in
+    # local dev (SQLite only auto-increments INTEGER PRIMARY KEY). No effect on
+    # the Postgres schema.
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
 
     # deposit, withdrawal, buyin, cashout, rake, win, loss, refund

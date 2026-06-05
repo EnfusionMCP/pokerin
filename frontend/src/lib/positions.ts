@@ -53,49 +53,33 @@ export function getPositions(heroSeat: number, maxSeats: number = 9): SeatPositi
  * Portrait stadium felt positions for mobile — 8 villain seats at top arc, hero at bottom.
  * Ellipse: rx=40%, ry=32%, center at (50%, 42%).
  */
-const PORTRAIT_CX = 50;
-const PORTRAIT_CY = 42;
-const PORTRAIT_RX = 40;
-const PORTRAIT_RY = 32;
+// Portrait felt: a tall, narrow oval. Seats are spread evenly around the WHOLE
+// perimeter (hero at bottom, the rest up both sides and across the top) — the
+// same parametric distribution as the desktop oval, just taller and narrower.
+// Cramming everyone onto the top arc overlapped the seat boxes on a phone.
+export const PORTRAIT_CX = 50;
+export const PORTRAIT_CY = 47;
+const PORTRAIT_RX = 29;  // pulled in so side-seat nameplates don't clip the phone edge
+const PORTRAIT_RY = 38;
 
 function buildBasePortrait(n: number): SeatPosition[] {
-  // Villains line the top arc (10°→170°); hero is appended at bottom-center.
-  const villainCount = n - 1;
   const seats: SeatPosition[] = [];
-
-  for (let i = 0; i < villainCount; i++) {
-    // Spread evenly across the arc. Guard the heads-up case (villainCount===1)
-    // where dividing by (villainCount-1) would be a division by zero → NaN;
-    // a single villain sits at the top-center (90°).
-    const frac = villainCount === 1 ? 0.5 : i / (villainCount - 1);
-    const angle = (10 + 160 * frac) * (Math.PI / 180);
+  for (let i = 0; i < n; i++) {
+    // Start at bottom (π/2) and go clockwise — index 0 is the hero seat.
+    const angle = (Math.PI / 2) - (2 * Math.PI * i) / n;
     seats.push({
       x: PORTRAIT_CX + PORTRAIT_RX * Math.cos(angle),
       y: PORTRAIT_CY - PORTRAIT_RY * Math.sin(angle),
     });
   }
-
-  // Hero at bottom-center.
-  seats.push({ x: PORTRAIT_CX, y: PORTRAIT_CY + PORTRAIT_RY });
-
   return seats;
 }
 
 export function getPositionsPortrait(heroSeat: number, maxSeats: number = 9): SeatPosition[] {
-  const base = buildBasePortrait(maxSeats);          // [villain0..villainN-1, hero]
-  const villainCount = maxSeats - 1;
-  const heroPos = base[villainCount];
+  const base = buildBasePortrait(maxSeats);
   const positions: SeatPosition[] = [];
   for (let i = 0; i < maxSeats; i++) {
-    if (i === heroSeat) {
-      positions.push(heroPos);
-    } else {
-      // Map the (maxSeats-1) villain seats bijectively onto base[0..villainCount-1].
-      // Subtract 1 so the seat immediately clockwise of the hero lands on base[0],
-      // with no collision and no skipped index.
-      const villainVisualIdx = ((i - heroSeat - 1 + maxSeats) % maxSeats) % villainCount;
-      positions.push(base[villainVisualIdx]);
-    }
+    positions.push(base[(i - heroSeat + maxSeats) % maxSeats]);
   }
   return positions;
 }

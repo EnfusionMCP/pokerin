@@ -12,7 +12,7 @@ class Hand(Base):
     """A single completed poker hand."""
     __tablename__ = "hands"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     table_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     hand_number: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -32,7 +32,7 @@ class HandPlayer(Base):
     """Per-player data for a hand — hole cards, stacks, result."""
     __tablename__ = "hand_players"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     hand_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("hands.id"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     seat: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -50,7 +50,7 @@ class HandAction(Base):
     """Individual action within a hand for full replay."""
     __tablename__ = "hand_actions"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     hand_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("hands.id"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     seat: Mapped[int] = mapped_column(Integer, nullable=False)

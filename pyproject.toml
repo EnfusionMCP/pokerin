@@ -27,6 +27,9 @@ dev = [
     "httpx",
 ]
 
+[tool.setuptools]
+packages = ["backend"]
+
 [build-system]
-requires = ["setuptools>=75"]
-build-backend = "setuptools.backends._legacy:_Backend"
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
