@@ -14,7 +14,7 @@ export function BetChip({ amount, x, y, collecting }: Props) {
 
   return (
     <div
-      className="absolute z-15 flex items-center gap-0.5 bg-green/90 rounded-full px-2 py-0.5 shadow-md"
+      className="absolute z-15 flex items-center gap-1 bg-green/95 rounded-full pl-1 pr-2 py-0.5 shadow-md ring-1 ring-black/30"
       style={{
         left: collecting ? '50%' : `${x}%`,
         top: collecting ? '30%' : `${y}%`,
@@ -23,7 +23,9 @@ export function BetChip({ amount, x, y, collecting }: Props) {
         transition: 'left 0.35s ease-in, top 0.35s ease-in, opacity 0.3s ease-in, transform 0.35s ease-in',
       }}
     >
-      <span className="text-xs font-bold text-black">
+      {/* little poker chip */}
+      <span className="inline-block w-3 h-3 rounded-full border-2 border-white/80 bg-green-700" />
+      <span className="text-xs font-extrabold text-black tabular-nums">
         {formatIskCompact(amount)}
       </span>
     </div>

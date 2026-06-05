@@ -28,6 +28,8 @@ interface Props {
   blindLabel?: 'SB' | 'BB' | null;
   canShowCards?: boolean;
   profit?: number;
+  isWinner?: boolean;
+  wonAmount?: number;
   timerStart?: number | null;
   timerTimeout?: number;
   bankTimeActive?: boolean;
@@ -69,7 +71,7 @@ function HoleCards({ cards, size, shown }: { cards: string[]; size: 'sm' | 'md' 
 
 export function Seat({
   seat, x, y, isHero, isActionOn, shownCards, lastAction, heroCards,
-  blindLabel, canShowCards, profit, timerStart, timerTimeout, bankTimeActive,
+  blindLabel, canShowCards, profit, isWinner, wonAmount, timerStart, timerTimeout, bankTimeActive,
   onClickEmpty, onShowCards,
 }: Props) {
   const isEmpty = seat.status === 'empty' || seat.user_id === null;
@@ -137,7 +139,7 @@ export function Seat({
         {/* Avatar with circular timer ring overlay */}
         <div className="relative z-10">
           {isActionOn && timerStart && timerTimeout && (
-            <div className="absolute -inset-1 z-20 pointer-events-none">
+            <div className="absolute -inset-1.5 z-20 pointer-events-none">
               <SeatTimerRing
                 isActive={isActionOn}
                 startTime={timerStart}
@@ -146,8 +148,19 @@ export function Seat({
               />
             </div>
           )}
-          <div className={`rounded-full ${isActionOn ? 'ring-2 ring-green/40' : ''}`}>
-            <SeatAvatar portraitUrl={seat.portrait ?? ''} name={seat.name ?? ''} dimmed={dimmed} />
+          <div
+            className={`rounded-full transition-shadow ${
+              isWinner ? 'ring-4 ring-yellow-300'
+              : isActionOn ? 'ring-[3px] ring-green-300 animate-seat-pulse'
+              : ''
+            }`}
+            style={
+              isWinner ? { boxShadow: '0 0 20px 5px rgba(250,204,21,0.75)' }
+              : isActionOn ? { boxShadow: '0 0 16px 3px rgba(74,222,128,0.65)' }
+              : undefined
+            }
+          >
+            <SeatAvatar portraitUrl={seat.portrait ?? ''} name={seat.name ?? ''} dimmed={dimmed && !isWinner} />
           </div>
 
           {/* SB/BB chip — top-right corner of the avatar */}
@@ -161,9 +174,13 @@ export function Seat({
         </div>
       </div>
 
-      {/* Slot 4: nameplate */}
+      {/* Slot 4: nameplate (highlights when it's this seat's turn / on a win) */}
       <div className="min-w-[70px] md:min-w-[84px] lg:min-w-[96px] mt-1 z-10">
-        <div className="bg-surface/90 rounded-md px-2 md:px-2.5 py-0.5 md:py-1 text-center">
+        <div className={`rounded-md px-2 md:px-2.5 py-0.5 md:py-1 text-center transition-colors ${
+          isActionOn ? 'bg-green-900/90 ring-1 ring-green-300'
+          : isWinner ? 'bg-yellow-900/80 ring-1 ring-yellow-300'
+          : 'bg-surface/90'
+        }`}>
           <div className="text-[10px] md:text-xs text-text truncate max-w-[80px] md:max-w-[96px] font-semibold">
             {seat.name}
           </div>
@@ -173,11 +190,14 @@ export function Seat({
         </div>
       </div>
 
-      {/* Slot 5: show-cards button takes priority (actionable); otherwise the
-          profit badge. Genuinely mutually exclusive so they never overlap — this
-          matters on an uncontested win, where a winner can both show and profit. */}
+      {/* Slot 5: winner payout (gold, persistent) > show-cards > profit. All
+          mutually exclusive so nothing overlaps. */}
       <div className="h-5 flex items-start justify-center z-30">
-        {canShowCards ? (
+        {isWinner && wonAmount ? (
+          <div className="bg-yellow-300 text-black text-[11px] font-extrabold px-2 py-0.5 rounded-full shadow whitespace-nowrap">
+            WON +{formatIskCompact(wonAmount)}
+          </div>
+        ) : canShowCards ? (
           <button
             onClick={onShowCards}
             className="bg-green hover:bg-green-dim text-black text-[9px] font-bold px-2 py-0.5 rounded-full shadow-md transition-colors whitespace-nowrap"
@@ -185,7 +205,7 @@ export function Seat({
             Show Cards
           </button>
         ) : (profit !== undefined && profit > 0 && (
-          <div className="text-green text-xs font-bold whitespace-nowrap animate-profit-float" style={{ animationDelay: '0.6s' }}>
+          <div className="text-green text-xs font-bold whitespace-nowrap">
             +{formatIskCompact(profit)}
           </div>
         ))}

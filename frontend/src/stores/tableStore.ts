@@ -166,9 +166,10 @@ export const useTableStore = create<TableState>((set, get) => ({
           seedHash: msg.seed_hash,
           blinds: msg.blinds,
           mySeat: findMySeat(msg.seats, state.myUserId),
-          // Clear stale state on full snapshot
-          shownCards: {},
-          winners: [],
+          // If we connected during the showdown pause, the snapshot carries the
+          // result so we still see who won; otherwise these are empty.
+          shownCards: msg.shown_cards ?? {},
+          winners: msg.winners ?? [],
           lastActions: {},
           prompt: null,
           promptTimerStart: null,

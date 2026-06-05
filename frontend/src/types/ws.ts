@@ -35,6 +35,8 @@ export interface TableStateMsg {
   your_cards: CardStr[] | null;
   hand_num: number;
   seed_hash: string | null;
+  winners?: WinnerInfo[];
+  shown_cards?: Record<string, CardStr[]>;
   blinds: { small: number; big: number };
 }
 

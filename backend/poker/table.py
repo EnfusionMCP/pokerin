@@ -95,6 +95,9 @@ class PokerTable:
         # Hand history for DB persistence
         self._hand_actions: list[dict] = []
         self._action_order: int = 0
+        # Last showdown result — shown to clients that connect during the
+        # post-hand pause so a refresh doesn't hide who won.
+        self._last_result: dict | None = None
 
     # ------------------------------------------------------------------
     # Main game loop
@@ -207,6 +210,9 @@ class PokerTable:
                  self.table_id, self.hand_number, in_hand_final,
                  [str(c) for c in self.community])
         result = self._resolve_showdown()
+        # Remember the result so a player who connects/refreshes during the
+        # showdown still sees who won and how much (get_state_for_player).
+        self._last_result = result
         await self._broadcast_result(result)
 
         # Persist hand history and rake to DB
@@ -220,7 +226,7 @@ class PokerTable:
                 seat.current_bet = 0
         self.pots = []
 
-        await asyncio.sleep(3.0)  # pause for players to see the result
+        await asyncio.sleep(5.0)  # pause for players to read the result (who won, how much)
 
     # ------------------------------------------------------------------
     # Dealing
@@ -1234,6 +1240,13 @@ class PokerTable:
                 your_cards = [str(c) for c in seat.hole_cards]
             seats_data.append(d)
 
+        # During the post-hand pause, surface the showdown result so a client
+        # that just connected/refreshed still sees who won and how much, and the
+        # revealed cards.
+        showing = self.phase == HandPhase.COMPLETE and self._last_result is not None
+        winners = self._last_result["winners"] if showing else []
+        shown_cards = self._last_result["shown_cards"] if showing else {}
+
         return {
             "type": ServerMsg.TABLE_STATE,
             "table_id": self.table_id,
@@ -1248,6 +1261,8 @@ class PokerTable:
             "your_cards": your_cards,
             "hand_num": self.hand_number,
             "seed_hash": self.deck.seed_hash if self.hand_number > 0 else None,
+            "winners": winners,
+            "shown_cards": shown_cards,
             "blinds": {
                 "small": self.config.small_blind,
                 "big": self.config.big_blind,

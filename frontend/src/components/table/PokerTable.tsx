@@ -133,6 +133,14 @@ export function PokerTable({ spectator = false }: { spectator?: boolean }) {
     return profits;
   }, [winners, handStartStacks, seats]);
 
+  // Gross amount won per seat (pot share, net of rake) — drives the gold "WON +X"
+  // badge and the center banner so it's obvious who won how much.
+  const wonAmounts = useMemo(() => {
+    const m: Record<number, number> = {};
+    for (const w of winners) m[w.seat] = (m[w.seat] ?? 0) + w.amount;
+    return m;
+  }, [winners]);
+
   return (
     <>
       <Felt>
@@ -152,17 +160,23 @@ export function PokerTable({ spectator = false }: { spectator?: boolean }) {
           </div>
         )}
 
-        {/* Winner info — below community cards, delayed 300ms after card reveal */}
+        {/* Winner banner — below community cards: clearly states who won how much */}
         {winners.length > 0 && (
           <div
-            className="absolute left-1/2 top-[62%] -translate-x-1/2 text-center animate-fade-in"
+            className="absolute left-1/2 top-[60%] -translate-x-1/2 text-center animate-fade-in flex flex-col items-center gap-1"
             style={{ animationDelay: '0.3s', animationFillMode: 'both' }}
           >
-            {winners.map((w, i) => (
-              <div key={i} className="text-xs text-green-400 font-medium">
-                {w.hand && <span>{w.hand}</span>}
-              </div>
-            ))}
+            {Object.entries(wonAmounts).map(([seatStr, amt]) => {
+              const s = Number(seatStr);
+              const nm = seats[s]?.name ?? `Seat ${s}`;
+              const hand = winners.find((w) => w.seat === s)?.hand;
+              return (
+                <div key={seatStr} className="bg-black/70 rounded-full px-3 py-1 text-sm font-extrabold text-yellow-300 whitespace-nowrap shadow">
+                  {nm} wins {formatIskCompact(amt)}
+                  {hand ? <span className="text-white/70 font-semibold"> · {hand}</span> : null}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -192,6 +206,8 @@ export function PokerTable({ spectator = false }: { spectator?: boolean }) {
             blindLabel={blindLabels[i] ?? null}
             canShowCards={i === mySeat && heroCanShow}
             profit={winnerProfits[i]}
+            isWinner={wonAmounts[i] !== undefined}
+            wonAmount={wonAmounts[i]}
             timerStart={i === actionOn ? promptTimerStart : null}
             timerTimeout={actionTimeout}
             bankTimeActive={i === bankTimeSeat}
