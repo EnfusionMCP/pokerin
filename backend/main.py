@@ -94,6 +94,11 @@ async def lifespan(app: FastAPI):
         while True:
             try:
                 await deposit_poll_loop()
+                # A normal return means the worker disabled itself (e.g. the bank
+                # character isn't configured). Do NOT hot-loop restarting it —
+                # that busy-spins the event loop and floods the logs.
+                log.info("Deposit worker exited cleanly; not restarting")
+                return
             except asyncio.CancelledError:
                 return
             except Exception as e:
