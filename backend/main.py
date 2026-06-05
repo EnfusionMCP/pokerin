@@ -103,10 +103,21 @@ async def lifespan(app: FastAPI):
     deposit_task = asyncio.create_task(_deposit_supervisor(), name="deposit-worker")
 
     # Create analytics table if it doesn't exist
-    from .db import engine
+    from .db import engine, async_session
     from .models.analytics import PageView
     async with engine.begin() as conn:
         await conn.run_sync(PageView.__table__.create, checkfirst=True)
+
+    # Ensure the house account (user_id=0) exists. Rake is recorded as a
+    # transaction on this account, and transactions.user_id is FK-constrained to
+    # users.id — without this row, Postgres rejects every rake entry and the
+    # house ledger silently loses all rake.
+    from .models.user import User
+    async with async_session() as session:
+        if await session.get(User, 0) is None:
+            session.add(User(id=0, character_id=0, character_name="HOUSE"))
+            await session.commit()
+            log.info("Created house account (user_id=0) for rake ledger")
 
     log.info("pokerin.space ready — %d tables active", len(default_tables))
 
