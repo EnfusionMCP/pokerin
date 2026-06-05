@@ -60,9 +60,10 @@ export function PokerTable({ spectator = false }: { spectator?: boolean }) {
   }, []);
   const positions = isPortrait ? getPositionsPortrait(heroSeat, maxSeats) : getPositions(heroSeat, maxSeats);
 
-  // Dealer button position
+  // Dealer button position — use the portrait ellipse center on mobile so the
+  // button hugs the correct side of the seat.
   const dealerPos = dealer >= 0 && dealer < maxSeats
-    ? getDealerPosition(positions[dealer])
+    ? (isPortrait ? getDealerPosition(positions[dealer], 50, 42) : getDealerPosition(positions[dealer]))
     : null;
 
   // Can only sit if not already seated and authenticated

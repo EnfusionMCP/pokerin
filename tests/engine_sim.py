@@ -461,6 +461,131 @@ async def test_rake_tiny_pot():
 
 
 # ----------------------------------------------------------------------------
+# Test 8: under-raise (incomplete all-in) must not reopen the raise option
+# ----------------------------------------------------------------------------
+
+async def test_underraise_gate():
+    from backend.poker.player import PlayerSeat
+    failures = []
+    rng = random.Random(1)
+    table, conn, bank = make_table(rng)
+    table.current_bet = 300
+    table.min_raise = 200
+
+    # A player who already called 200 now faces a 100 incomplete all-in raise.
+    s = PlayerSeat(seat=0, user_id=1, character_name="x", stack=10000, status=SeatStatus.ACTIVE)
+    s.current_bet = 200
+    valid = [a.value for a in table._get_valid_actions(s)]
+    if "raise" in valid:
+        failures.append(f"under-raise: RAISE wrongly offered facing incomplete raise: {valid}")
+    if "call" not in valid:
+        failures.append(f"under-raise: CALL missing: {valid}")
+
+    # A yet-to-act player facing a full raise CAN raise.
+    s2 = PlayerSeat(seat=1, user_id=2, character_name="y", stack=10000, status=SeatStatus.ACTIVE)
+    s2.current_bet = 0
+    if "raise" not in [a.value for a in table._get_valid_actions(s2)]:
+        failures.append("full-raise: RAISE should be offered to a player facing a full raise")
+
+    # A matched player (to_call==0, e.g. BB option) CAN raise.
+    s3 = PlayerSeat(seat=2, user_id=3, character_name="z", stack=10000, status=SeatStatus.ACTIVE)
+    s3.current_bet = 300
+    if "raise" not in [a.value for a in table._get_valid_actions(s3)]:
+        failures.append("matched-option: RAISE should be offered when to_call==0")
+    return failures
+
+
+# ----------------------------------------------------------------------------
+# Test 9: reconnect restores a disconnect-sat-out player (but not a real AFK)
+# ----------------------------------------------------------------------------
+
+async def test_reconnect_restores():
+    failures = []
+    rng = random.Random(2)
+    table, conn, bank = make_table(rng)
+    for uid in (1, 2):
+        bank.wallets[uid] = 100000
+        conn.seated.add(uid)
+    await table.sit_down(1, 1001, "A", seat=0, buyin=20000)
+    await table.sit_down(2, 1002, "B", seat=1, buyin=20000)
+
+    await table.handle_disconnect(1)  # IDLE, not in hand → SITTING_OUT
+    if table.seats[0].status != SeatStatus.SITTING_OUT:
+        failures.append("reconnect setup: not SITTING_OUT after disconnect")
+    table.handle_reconnect(1)
+    if table.seats[0].status != SeatStatus.WAITING:
+        failures.append(f"reconnect: status not restored: {table.seats[0].status}")
+    if table.seats[0].sit_out_hands != 0:
+        failures.append("reconnect: sit_out_hands not reset")
+
+    # A genuine AFK (auto_sitout) must stay sat out on reconnect.
+    table.seats[1].status = SeatStatus.SITTING_OUT
+    table._auto_sitout.add(2)
+    table.handle_reconnect(2)
+    if table.seats[1].status != SeatStatus.SITTING_OUT:
+        failures.append("reconnect: AFK player wrongly reactivated")
+    return failures
+
+
+# ----------------------------------------------------------------------------
+# Test 10: rebuy via add_chips reactivates a busted sat-out player
+# ----------------------------------------------------------------------------
+
+async def test_rebuy_reactivates():
+    failures = []
+    rng = random.Random(3)
+    table, conn, bank = make_table(rng)
+    for uid in (1, 2):
+        bank.wallets[uid] = 100000
+        conn.seated.add(uid)
+    await table.sit_down(1, 1001, "A", seat=0, buyin=20000)
+    await table.sit_down(2, 1002, "B", seat=1, buyin=20000)
+
+    s = table.seats[0]
+    s.stack = 0
+    s.status = SeatStatus.SITTING_OUT
+    s.sit_out_hands = 2
+    await table.add_chips(1, 10000)  # phase IDLE
+    if table.seats[0].status != SeatStatus.WAITING:
+        failures.append(f"rebuy: status not reactivated: {table.seats[0].status}")
+    if table.seats[0].sit_out_hands != 0:
+        failures.append("rebuy: sit_out_hands not reset → would be wrongly kicked")
+    return failures
+
+
+# ----------------------------------------------------------------------------
+# Test 11: _cleanup_disconnected credits the stack exactly once (no double-credit)
+# ----------------------------------------------------------------------------
+
+async def test_cleanup_no_double_credit():
+    failures = []
+    rng = random.Random(4)
+    table, conn, bank = make_table(rng)
+    for uid in (1, 2):
+        bank.wallets[uid] = 100000
+        conn.seated.add(uid)
+    await table.sit_down(1, 1001, "A", seat=0, buyin=20000)
+    await table.sit_down(2, 1002, "B", seat=1, buyin=20000)
+
+    s = table.seats[0]
+    s.status = SeatStatus.SITTING_OUT
+    conn.seated.discard(1)            # appears disconnected
+    table._disconnected_users.add(1)
+    wallet_before = bank.wallets[1]
+    stack = s.stack
+    table.phase = table_mod.HandPhase.COMPLETE
+
+    await table._cleanup_disconnected()
+    await table._cleanup_disconnected()  # idempotent — must not re-credit
+
+    if table.seats[0] is not None:
+        failures.append("cleanup: seat not removed")
+    if bank.wallets[1] != wallet_before + stack:
+        failures.append(f"cleanup: wrong credit {bank.wallets[1]} != {wallet_before + stack} (double-credit?)")
+    return failures
+
+
+# ----------------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------------
 
@@ -476,6 +601,10 @@ async def main():
         ("bank-time / sit-out / kick", test_bank_time_escalation),
         ("S3 folded stand-up", test_s3_folded_standup),
         ("rake never exceeds a pot", test_rake_tiny_pot),
+        ("under-raise does not reopen action", test_underraise_gate),
+        ("reconnect restores sat-out player", test_reconnect_restores),
+        ("rebuy reactivates busted player", test_rebuy_reactivates),
+        ("cleanup credits exactly once", test_cleanup_no_double_credit),
     ]
     all_ok = True
     for name, fn in tests:

@@ -263,37 +263,43 @@ class PokerTable:
         """
         if self.phase not in (HandPhase.IDLE, HandPhase.COMPLETE):
             return
-        connected = self.conn.get_connected_users(self.table_id)
-        for i, seat in enumerate(self.seats):
-            if seat and seat.status == SeatStatus.SITTING_OUT:
-                if seat.user_id in self._bot_users:
-                    continue  # bots don't need WS connections
-                disconnected = seat.user_id not in connected
-                kicked = seat.sit_out_hands >= SIT_OUT_KICK_HANDS
-                if disconnected or kicked:
-                    uid = seat.user_id
-                    reason = "disconnect" if disconnected else "sitout-kick"
-                    # Credit remaining stack back to bank before removing
-                    if seat.stack > 0 and self._bank:
-                        try:
-                            await self._bank.credit(uid, seat.stack, tx_type="cashout",
-                                                     reference_id=f"table:{self.table_id}:{reason}")
-                            log.info("Credited %d to user %d on %s cleanup", seat.stack, uid, reason)
-                        except Exception as e:
-                            log.error("Failed to credit cleanup stack: user=%d amount=%d: %s", uid, seat.stack, e)
-                    self.seats[i] = None
-                    self._action_queues.pop(uid, None)
-                    self._disconnected_users.discard(uid)
-                    self._auto_sitout.discard(uid)
-                    if kicked and not disconnected:
-                        await self.conn.send_to_player(self.table_id, uid, {
-                            "type": ServerMsg.ERROR,
-                            "message": "Removed from table after sitting out 3 hands",
+        # Hold the seat lock so a concurrent stand_up can't credit the same stack
+        # we're about to credit (double-credit race). We also null the seat and
+        # capture the amount BEFORE awaiting the credit, so any re-entrant path
+        # sees an empty seat.
+        async with self._seat_lock:
+            connected = self.conn.get_connected_users(self.table_id)
+            for i, seat in enumerate(self.seats):
+                if seat and seat.status == SeatStatus.SITTING_OUT:
+                    if seat.user_id in self._bot_users:
+                        continue  # bots don't need WS connections
+                    disconnected = seat.user_id not in connected
+                    kicked = seat.sit_out_hands >= SIT_OUT_KICK_HANDS
+                    if disconnected or kicked:
+                        uid = seat.user_id
+                        amount = seat.stack
+                        reason = "disconnect" if disconnected else "sitout-kick"
+                        # Remove the seat first so no other path can re-credit it.
+                        self.seats[i] = None
+                        self._action_queues.pop(uid, None)
+                        self._disconnected_users.discard(uid)
+                        self._auto_sitout.discard(uid)
+                        if amount > 0 and self._bank:
+                            try:
+                                await self._bank.credit(uid, amount, tx_type="cashout",
+                                                         reference_id=f"table:{self.table_id}:{reason}")
+                                log.info("Credited %d to user %d on %s cleanup", amount, uid, reason)
+                            except Exception as e:
+                                log.error("Failed to credit cleanup stack: user=%d amount=%d: %s", uid, amount, e)
+                        if kicked and not disconnected:
+                            await self.conn.send_to_player(self.table_id, uid, {
+                                "type": ServerMsg.ERROR,
+                                "message": "Removed from table after sitting out 3 hands",
+                            })
+                        await self._broadcast({
+                            "type": ServerMsg.SEAT_UPDATE,
+                            "seat": i, "user_id": None, "status": "empty",
                         })
-                    await self._broadcast({
-                        "type": ServerMsg.SEAT_UPDATE,
-                        "seat": i, "user_id": None, "status": "empty",
-                    })
 
     def _advance_dealer(self) -> None:
         """Move dealer button to next occupied seat."""
@@ -553,12 +559,15 @@ class PokerTable:
         else:
             actions.append(ActionType.CALL)
 
-        # Can raise if not already all-in and have chips beyond calling
+        # Can raise only if the player has chips beyond the call AND the betting
+        # is actually open to them. A sub-minimum all-in (an "incomplete raise")
+        # does NOT reopen the action — a player facing 0 < to_call < min_raise may
+        # only call or fold, never re-raise.
         if seat.stack > to_call:
             if self.current_bet == 0:
-                actions.append(ActionType.BET)
-            else:
-                actions.append(ActionType.RAISE)
+                actions.append(ActionType.BET)          # opening bet
+            elif to_call == 0 or to_call >= self.min_raise:
+                actions.append(ActionType.RAISE)        # facing a full (reopening) bet/raise
 
         return actions
 
@@ -1137,8 +1146,22 @@ class PokerTable:
                 return
 
     def handle_reconnect(self, user_id: int) -> None:
-        """Clear disconnect flag when a player reconnects mid-hand."""
+        """Clear disconnect flag when a player reconnects.
+
+        If the player was sat out purely because they disconnected (not because
+        they exhausted their bank time / went AFK), bring them back to WAITING so
+        the next hand deals them in. Without this, a brief network blip would trap
+        them in SITTING_OUT and get them kicked after 3 hands.
+        """
         self._disconnected_users.discard(user_id)
+        for seat in self.seats:
+            if seat and seat.user_id == user_id:
+                if (seat.status == SeatStatus.SITTING_OUT
+                        and seat.stack > 0
+                        and user_id not in self._auto_sitout):
+                    seat.status = SeatStatus.WAITING
+                    seat.sit_out_hands = 0
+                return
 
     async def add_chips(self, user_id: int, amount: int) -> None:
         """Top up a player's stack between hands."""
@@ -1176,6 +1199,13 @@ class PokerTable:
                         })
                         return
                 seat.stack = new_stack
+                # A rebuy is an explicit "I'm back" — clear any sit-out so the
+                # player is dealt in next hand and not kicked for the streak.
+                if seat.status == SeatStatus.SITTING_OUT and seat.stack > 0:
+                    seat.status = SeatStatus.WAITING
+                    seat.sit_out_hands = 0
+                    self._auto_sitout.discard(user_id)
+                    self._disconnected_users.discard(user_id)
                 await self._broadcast({
                     "type": ServerMsg.SEAT_UPDATE,
                     **seat.to_public_dict(),

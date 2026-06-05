@@ -346,6 +346,7 @@ export const useTableStore = create<TableState>((set, get) => ({
           pots: msg.pots ?? state.pots,
           prompt: null,
           promptTimerStart: null,
+          bankTimeSeat: null,
           actionOn: -1,
           chatMessages: [
             ...state.chatMessages.slice(-(100 - winMsgs.length)),

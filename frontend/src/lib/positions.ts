@@ -117,9 +117,9 @@ export function getBetPosition(seatPos: SeatPosition): SeatPosition {
  * Get the position for the dealer button — offset to the clockwise side of the seat,
  * pushed well away so it never overlaps the nameplate or stack.
  */
-export function getDealerPosition(seatPos: SeatPosition): SeatPosition {
-  const dx = CX - seatPos.x;
-  const dy = CY - seatPos.y;
+export function getDealerPosition(seatPos: SeatPosition, cx: number = CX, cy: number = CY): SeatPosition {
+  const dx = cx - seatPos.x;
+  const dy = cy - seatPos.y;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
   // Perpendicular (clockwise) + inward toward center
   const perpX = -dy / len;

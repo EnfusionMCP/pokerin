@@ -173,21 +173,22 @@ export function Seat({
         </div>
       </div>
 
-      {/* Slot 5: profit badge OR show-cards button (mutually exclusive, own row) */}
+      {/* Slot 5: show-cards button takes priority (actionable); otherwise the
+          profit badge. Genuinely mutually exclusive so they never overlap — this
+          matters on an uncontested win, where a winner can both show and profit. */}
       <div className="h-5 flex items-start justify-center z-30">
-        {profit !== undefined && profit > 0 && (
-          <div className="text-green text-xs font-bold whitespace-nowrap animate-profit-float" style={{ animationDelay: '0.6s' }}>
-            +{formatIskCompact(profit)}
-          </div>
-        )}
-        {canShowCards && (
+        {canShowCards ? (
           <button
             onClick={onShowCards}
             className="bg-green hover:bg-green-dim text-black text-[9px] font-bold px-2 py-0.5 rounded-full shadow-md transition-colors whitespace-nowrap"
           >
             Show Cards
           </button>
-        )}
+        ) : (profit !== undefined && profit > 0 && (
+          <div className="text-green text-xs font-bold whitespace-nowrap animate-profit-float" style={{ animationDelay: '0.6s' }}>
+            +{formatIskCompact(profit)}
+          </div>
+        ))}
       </div>
     </div>
   );
