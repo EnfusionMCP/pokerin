@@ -18,7 +18,7 @@ export function SideMenu({ isOpen, onClose, spectator = false }: Props) {
         </div>
         <nav className="flex flex-col">
           {!spectator && mySeat >= 0 && (
-            <button onClick={() => { send?.({ type: 'stand' }); onClose(); }}
+            <button onClick={() => { if (send?.({ type: 'stand' })) onClose(); }}
               className="flex items-center gap-3 px-5 py-3 text-sm text-text hover:bg-surface-light hover:text-white transition-colors text-left font-semibold">
               Stand Up
             </button>

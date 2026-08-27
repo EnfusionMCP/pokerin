@@ -11,9 +11,11 @@ get_state_for_player() method filters the state for each recipient.
 import asyncio
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional
+from uuid import uuid4
 
 from .deck import Deck
 from .evaluator import evaluate_hand, hand_category_name
@@ -24,7 +26,14 @@ from .types import (
     ActionType, Card, HandPhase, PlayerAction, SeatStatus, Street,
     RANK_CHARS, SUIT_CHARS,
 )
-from ..ws.protocol import ServerMsg
+from ..services.bank import InsufficientBalance
+from ..ws.protocol import (
+    ActionPromptMessage,
+    SERVER_MESSAGE_ADAPTER,
+    ServerMsg,
+    TableStateMessage,
+    add_server_metadata,
+)
 
 log = logging.getLogger(__name__)
 
@@ -49,17 +58,33 @@ class TableConfig:
     rake_cap: int = 0
 
 
+@dataclass(frozen=True)
+class QueuedPlayerAction:
+    """An action bound to the exact turn prompt that accepted it."""
+
+    action: PlayerAction
+    prompt_id: str
+    command_id: str | None = None
+
+
 class PokerTable:
     """A single poker table running as an asyncio task."""
 
     def __init__(self, config: TableConfig, conn_manager, bank=None):
         self.config = config
         self.table_id = config.id
+        # Revisions are monotonic only within this opaque table-process epoch.
+        # Clients must reset their revision cursor when this value changes.
+        self.stream_id = str(uuid4())
         self.conn = conn_manager
         self._bank = bank  # BankService for DB balance operations
 
         # Lock for seat mutations (sit_down, stand_up, add_chips)
         self._seat_lock = asyncio.Lock()
+        # Serialize revision allocation and public delivery. Connection
+        # bootstrap also takes this lock so a snapshot is always the first frame
+        # in a newly activated subscription.
+        self._event_lock = asyncio.Lock()
 
         # Seats
         self.seats: list[Optional[PlayerSeat]] = [None] * config.max_seats
@@ -79,8 +104,13 @@ class PokerTable:
         self.saw_flop: bool = False
 
         # Per-player action queues — keyed by user_id (BUG A fix)
-        self._action_queues: dict[int, asyncio.Queue] = {}
+        self._action_queues: dict[int, asyncio.Queue[QueuedPlayerAction]] = {}
         self._shutdown = asyncio.Event()
+        # Phase 1 protocol ordering/correlation. Phase 2 persists these values.
+        self._revision: int = 0
+        self._current_prompt_id: str | None = None
+        self._recent_command_ids: set[str] = set()
+        self._recent_command_order: deque[str] = deque(maxlen=1024)
         # Track disconnected user IDs for cleanup between hands (BUG B fix)
         self._disconnected_users: set[int] = set()
         # Players who timed out with no bank time left — moved to SITTING_OUT
@@ -298,7 +328,7 @@ class PokerTable:
                             except Exception as e:
                                 log.error("Failed to credit cleanup stack: user=%d amount=%d: %s", uid, amount, e)
                         if kicked and not disconnected:
-                            await self.conn.send_to_player(self.table_id, uid, {
+                            await self._send_to_player(uid, {
                                 "type": ServerMsg.ERROR,
                                 "message": "Removed from table after sitting out 3 hands",
                             })
@@ -371,7 +401,7 @@ class PokerTable:
         """Send each player their own hole cards (PRIVATE — never broadcast)."""
         for seat in self.seats:
             if seat and seat.hole_cards:
-                await self.conn.send_to_player(self.table_id, seat.user_id, {
+                await self._send_to_player(seat.user_id, {
                     "type": ServerMsg.DEAL,
                     "cards": [str(c) for c in seat.hole_cards],
                 })
@@ -445,28 +475,27 @@ class PokerTable:
                 continue
 
             valid = self._get_valid_actions(seat)
+            prompt_id = str(uuid4())
+            self._current_prompt_id = prompt_id
 
             # Broadcast who's acting so all clients can show the timer
             await self._broadcast({
-                "type": "action_on",
+                "type": ServerMsg.ACTION_ON,
                 "seat": self.action_on,
                 "timeout": ACTION_TIMEOUT,
+                "prompt_id": prompt_id,
+                "turn_token": prompt_id,
             })
 
-            await self.conn.send_to_player(self.table_id, seat.user_id, {
-                "type": ServerMsg.ACTION_PROMPT,
-                "valid": [a.value for a in valid],
-                "call_amount": max(0, self.current_bet - seat.current_bet),
-                "min_raise": self.current_bet + self.min_raise,
-                "max_raise": seat.stack + seat.current_bet,
-                "timeout": ACTION_TIMEOUT,
-            })
+            await self._send_to_player(seat.user_id, self.get_action_prompt_for(seat, valid))
 
             # Wait for action (or timeout → auto-fold)
             log.info("[%s] %s: waiting for seat%d (%s) | cur_bet=%d seat_bet=%d stack=%d",
                      self.table_id, self.street.value, seat.seat, seat.character_name,
                      self.current_bet, seat.current_bet, seat.stack)
-            action = await self._wait_for_action(seat.user_id)
+            action = await self._wait_for_action(seat.user_id, prompt_id)
+            if self._current_prompt_id == prompt_id:
+                self._current_prompt_id = None
 
             # Validate action against legal moves — coerce invalid actions
             valid_set = {a.value for a in valid}
@@ -577,25 +606,41 @@ class PokerTable:
 
         return actions
 
-    async def _wait_for_action(self, user_id: int) -> PlayerAction:
-        """Wait for a player action from their per-player queue, with timeout."""
+    async def _next_action_for_prompt(
+        self,
+        queue: asyncio.Queue[QueuedPlayerAction],
+        prompt_id: str,
+        timeout: float,
+    ) -> PlayerAction:
+        """Return the next action for ``prompt_id`` without extending its timer."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError
+            queued = await asyncio.wait_for(queue.get(), timeout=remaining)
+            if queued.prompt_id == prompt_id:
+                return queued.action
+            log.debug(
+                "Ignoring stale queued action: user=%d expected_prompt=%s got_prompt=%s command=%s",
+                queued.action.user_id,
+                prompt_id,
+                queued.prompt_id,
+                queued.command_id,
+            )
+
+    async def _wait_for_action(self, user_id: int, prompt_id: str) -> PlayerAction:
+        """Wait for an action bound to this exact prompt, with timeout."""
         queue = self._action_queues.get(user_id)
         if queue is None:
             queue = asyncio.Queue()
             self._action_queues[user_id] = queue
 
-        # Drain any stale actions left in the queue from previous turns
-        while not queue.empty():
-            try:
-                queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-
         seat = next((s for s in self.seats if s and s.user_id == user_id), None)
 
         # Base timer.
         try:
-            return await asyncio.wait_for(queue.get(), timeout=ACTION_TIMEOUT)
+            return await self._next_action_for_prompt(queue, prompt_id, ACTION_TIMEOUT)
         except asyncio.TimeoutError:
             pass
 
@@ -614,7 +659,7 @@ class PokerTable:
             })
             log.info("Player %d using bank time (%.0fs)", user_id, BANK_TIME)
             try:
-                return await asyncio.wait_for(queue.get(), timeout=BANK_TIME)
+                return await self._next_action_for_prompt(queue, prompt_id, BANK_TIME)
             except asyncio.TimeoutError:
                 # Bank time gone — auto-check if free, else fold. Keep the seat.
                 if self.current_bet <= seat.current_bet:
@@ -992,40 +1037,46 @@ class PokerTable:
 
     async def sit_down(
         self, user_id: int, character_id: int, character_name: str,
-        seat: int, buyin: int,
+        seat: int, buyin: int, command_id: str | None = None,
     ) -> None:
         """Seat a player at the table."""
         async with self._seat_lock:
-            await self._sit_down_inner(user_id, character_id, character_name, seat, buyin)
+            await self._sit_down_inner(
+                user_id, character_id, character_name, seat, buyin, command_id
+            )
 
     async def _sit_down_inner(
         self, user_id: int, character_id: int, character_name: str,
-        seat: int, buyin: int,
+        seat: int, buyin: int, command_id: str | None = None,
     ) -> None:
         if seat < 0 or seat >= self.config.max_seats:
-            await self.conn.send_to_player(self.table_id, user_id, {
-                "type": ServerMsg.ERROR, "message": "Invalid seat number",
+            await self._send_to_player(user_id, {
+                "type": ServerMsg.ERROR, "code": "invalid_seat",
+                "message": "Invalid seat number", "command_id": command_id,
             })
             return
 
         if self.seats[seat] is not None:
-            await self.conn.send_to_player(self.table_id, user_id, {
-                "type": ServerMsg.ERROR, "message": "Seat is occupied",
+            await self._send_to_player(user_id, {
+                "type": ServerMsg.ERROR, "code": "seat_occupied",
+                "message": "Seat is occupied", "command_id": command_id,
             })
             return
 
         # Check player isn't already seated elsewhere at this table
         for s in self.seats:
             if s and s.user_id == user_id:
-                await self.conn.send_to_player(self.table_id, user_id, {
-                    "type": ServerMsg.ERROR, "message": "Already seated at this table",
+                await self._send_to_player(user_id, {
+                    "type": ServerMsg.ERROR, "code": "already_seated",
+                    "message": "Already seated at this table", "command_id": command_id,
                 })
                 return
 
         if buyin < self.config.min_buyin or buyin > self.config.max_buyin:
-            await self.conn.send_to_player(self.table_id, user_id, {
+            await self._send_to_player(user_id, {
                 "type": ServerMsg.ERROR,
                 "message": f"Buy-in must be between {self.config.min_buyin} and {self.config.max_buyin}",
+                "code": "invalid_buyin", "command_id": command_id,
             })
             return
 
@@ -1036,9 +1087,21 @@ class PokerTable:
                     user_id, buyin, tx_type="buyin",
                     reference_id=f"table:{self.table_id}",
                 )
-            except Exception as e:
-                await self.conn.send_to_player(self.table_id, user_id, {
-                    "type": ServerMsg.ERROR, "message": str(e),
+            except InsufficientBalance:
+                await self._send_to_player(user_id, {
+                    "type": ServerMsg.ERROR,
+                    "code": "insufficient_balance",
+                    "message": "Insufficient wallet balance for this buy-in",
+                    "command_id": command_id,
+                })
+                return
+            except Exception:
+                log.exception("Buy-in debit failed: table=%s user=%d", self.table_id, user_id)
+                await self._send_to_player(user_id, {
+                    "type": ServerMsg.ERROR,
+                    "code": "buyin_failed",
+                    "message": "Unable to complete buy-in",
+                    "command_id": command_id,
                 })
                 return
 
@@ -1061,12 +1124,12 @@ class PokerTable:
         log.info("Player %s sat at table %s seat %d (buyin=%d)",
                  character_name, self.table_id, seat, buyin)
 
-    async def stand_up(self, user_id: int) -> None:
+    async def stand_up(self, user_id: int, command_id: str | None = None) -> None:
         """Remove a player from the table."""
         async with self._seat_lock:
-            await self._stand_up_inner(user_id)
+            await self._stand_up_inner(user_id, command_id)
 
-    async def _stand_up_inner(self, user_id: int) -> None:
+    async def _stand_up_inner(self, user_id: int, command_id: str | None = None) -> None:
         for i, seat in enumerate(self.seats):
             if seat and seat.user_id == user_id:
                 # Mid-hand: defer removal until the hand ends. S3 fix — this must
@@ -1079,11 +1142,14 @@ class PokerTable:
                     # Inject fold so _wait_for_action unblocks immediately
                     if seat.is_active:
                         seat.status = SeatStatus.FOLDED
-                        queue = self._action_queues.get(user_id)
-                        if queue is None:
-                            queue = asyncio.Queue()
-                            self._action_queues[user_id] = queue
-                        await queue.put(PlayerAction(action=ActionType.FOLD, user_id=user_id))
+                        if self.action_on == i and self._current_prompt_id is not None:
+                            await self._enqueue_action(
+                                user_id,
+                                PlayerAction(action=ActionType.FOLD, user_id=user_id),
+                                self._current_prompt_id,
+                                command_id,
+                            )
+                    self._bump_revision()
                     return
 
                 # Credit remaining stack back to DB balance
@@ -1110,6 +1176,69 @@ class PokerTable:
 
     async def handle_player_action(self, user_id: int, raw: dict) -> None:
         """Handle an action message from a player."""
+        command_id = raw.get("command_id")
+        if isinstance(command_id, str) and command_id in self._recent_command_ids:
+            await self._send_to_player(user_id, {
+                "type": ServerMsg.ERROR,
+                "code": "duplicate_command",
+                "message": "This command_id was already accepted",
+                "command_id": command_id,
+            })
+            return
+
+        prompt_alias = raw.get("prompt_id")
+        turn_token = raw.get("turn_token")
+        if prompt_alias is not None and turn_token is not None and prompt_alias != turn_token:
+            await self._send_to_player(user_id, {
+                "type": ServerMsg.ERROR,
+                "code": "prompt_token_mismatch",
+                "message": "prompt_id and turn_token must match",
+                "command_id": command_id,
+            })
+            return
+        if raw.get("schema_version") == 1 and (prompt_alias is None or turn_token is None):
+            await self._send_to_player(user_id, {
+                "type": ServerMsg.ERROR,
+                "code": "missing_prompt_token",
+                "message": "Versioned action commands require the current prompt token",
+                "command_id": command_id,
+            })
+            return
+
+        prompt_id = turn_token or prompt_alias
+        if prompt_id is not None and prompt_id != self._current_prompt_id:
+            await self._send_to_player(user_id, {
+                "type": ServerMsg.ERROR,
+                "code": "stale_prompt",
+                "message": "Action does not match the current prompt",
+                "command_id": command_id,
+                "details": {"expected_prompt_id": self._current_prompt_id},
+            })
+            return
+
+        acting = self.seats[self.action_on] if 0 <= self.action_on < len(self.seats) else None
+        if self.phase != HandPhase.BETTING or acting is None or acting.user_id != user_id:
+            await self._send_to_player(user_id, {
+                "type": ServerMsg.ERROR,
+                "code": "not_your_turn",
+                "message": "It is not your turn",
+                "command_id": command_id,
+            })
+            return
+
+        # Explicitly unversioned legacy actions may omit the capability, but are
+        # still bound to the current prompt at ingress so they cannot leak into
+        # a later turn.
+        accepted_prompt_id = self._current_prompt_id
+        if accepted_prompt_id is None:
+            await self._send_to_player(user_id, {
+                "type": ServerMsg.ERROR,
+                "code": "no_active_prompt",
+                "message": "There is no active action prompt",
+                "command_id": command_id,
+            })
+            return
+
         # BUG 18 fix: coerce amount to int, default 0
         try:
             amount = max(0, int(raw.get("amount", 0)))
@@ -1122,18 +1251,47 @@ class PokerTable:
         try:
             action_type = ActionType(action_str)
         except ValueError:
-            await self.conn.send_to_player(self.table_id, user_id, {
-                "type": ServerMsg.ERROR, "message": "Invalid action",
+            await self._send_to_player(user_id, {
+                "type": ServerMsg.ERROR,
+                "code": "invalid_action",
+                "message": "Invalid action",
+                "command_id": command_id,
             })
             return
 
         action = PlayerAction(action=action_type, amount=amount, user_id=user_id)
-        # Route to per-player queue (BUG A fix)
+        if isinstance(command_id, str):
+            if len(self._recent_command_order) == self._recent_command_order.maxlen:
+                expired = self._recent_command_order.popleft()
+                self._recent_command_ids.discard(expired)
+            self._recent_command_order.append(command_id)
+            self._recent_command_ids.add(command_id)
+        # Route to the per-player queue, bound to the exact prompt. The waiter
+        # may not have started yet; it must not drain this valid fast response.
+        await self._enqueue_action(user_id, action, accepted_prompt_id, command_id)
+
+    async def _enqueue_action(
+        self,
+        user_id: int,
+        action: PlayerAction,
+        prompt_id: str,
+        command_id: str | None = None,
+    ) -> None:
         queue = self._action_queues.get(user_id)
         if queue is None:
             queue = asyncio.Queue()
             self._action_queues[user_id] = queue
-        await queue.put(action)
+        await queue.put(QueuedPlayerAction(action, prompt_id, command_id))
+
+    async def enqueue_internal_action(self, user_id: int, action: PlayerAction) -> bool:
+        """Queue a trusted bot/system action for the current prompt only."""
+        if self._current_prompt_id is None or not (0 <= self.action_on < len(self.seats)):
+            return False
+        acting = self.seats[self.action_on]
+        if acting is None or acting.user_id != user_id:
+            return False
+        await self._enqueue_action(user_id, action, self._current_prompt_id)
+        return True
 
     async def handle_disconnect(self, user_id: int) -> None:
         """Handle a player disconnecting.
@@ -1143,15 +1301,39 @@ class PokerTable:
         that. This gives players a chance to reconnect after brief network
         hiccups without losing their hand.
         """
-        self._disconnected_users.add(user_id)
+        async with self._event_lock:
+            self._disconnected_users.add(user_id)
+            for seat in self.seats:
+                if seat and seat.user_id == user_id:
+                    public_status_changed = False
+                    if not seat.is_in_hand and seat.status != SeatStatus.SITTING_OUT:
+                        seat.status = SeatStatus.SITTING_OUT
+                        public_status_changed = True
+                    if public_status_changed:
+                        await self._broadcast_locked({
+                            "type": ServerMsg.SEAT_UPDATE,
+                            **seat.to_public_dict(),
+                        })
+                    log.info("Player %d disconnected from table %s", user_id, self.table_id)
+                    return
+
+    def _restore_reconnected_seat(self, user_id: int) -> PlayerSeat | None:
+        """Mutate reconnect state and return a seat whose public status changed."""
+        was_disconnected = user_id in self._disconnected_users
+        self._disconnected_users.discard(user_id)
         for seat in self.seats:
             if seat and seat.user_id == user_id:
-                if not seat.is_in_hand:
-                    seat.status = SeatStatus.SITTING_OUT
-                log.info("Player %d disconnected from table %s", user_id, self.table_id)
-                return
+                if (was_disconnected
+                        and seat.status == SeatStatus.SITTING_OUT
+                        and seat.stack > 0
+                        and user_id not in self._auto_sitout):
+                    seat.status = SeatStatus.WAITING
+                    seat.sit_out_hands = 0
+                    return seat
+                return None
+        return None
 
-    def handle_reconnect(self, user_id: int) -> None:
+    async def handle_reconnect(self, user_id: int) -> None:
         """Clear disconnect flag when a player reconnects.
 
         If the player was sat out purely because they disconnected (not because
@@ -1159,37 +1341,41 @@ class PokerTable:
         the next hand deals them in. Without this, a brief network blip would trap
         them in SITTING_OUT and get them kicked after 3 hands.
         """
-        self._disconnected_users.discard(user_id)
-        for seat in self.seats:
-            if seat and seat.user_id == user_id:
-                if (seat.status == SeatStatus.SITTING_OUT
-                        and seat.stack > 0
-                        and user_id not in self._auto_sitout):
-                    seat.status = SeatStatus.WAITING
-                    seat.sit_out_hands = 0
-                return
+        async with self._event_lock:
+            seat = self._restore_reconnected_seat(user_id)
+            if seat is not None:
+                await self._broadcast_locked({
+                    "type": ServerMsg.SEAT_UPDATE,
+                    **seat.to_public_dict(),
+                })
 
-    async def add_chips(self, user_id: int, amount: int) -> None:
+    async def add_chips(
+        self, user_id: int, amount: int, command_id: str | None = None
+    ) -> None:
         """Top up a player's stack between hands."""
         async with self._seat_lock:
-            await self._add_chips_inner(user_id, amount)
+            await self._add_chips_inner(user_id, amount, command_id)
 
-    async def _add_chips_inner(self, user_id: int, amount: int) -> None:
+    async def _add_chips_inner(
+        self, user_id: int, amount: int, command_id: str | None = None
+    ) -> None:
         if amount <= 0:
             return
         for seat in self.seats:
             if seat and seat.user_id == user_id:
                 if self.phase not in (HandPhase.IDLE, HandPhase.COMPLETE):
-                    await self.conn.send_to_player(self.table_id, user_id, {
+                    await self._send_to_player(user_id, {
                         "type": ServerMsg.ERROR,
                         "message": "Can only add chips between hands",
+                        "code": "hand_in_progress", "command_id": command_id,
                     })
                     return
                 new_stack = seat.stack + amount
                 if new_stack > self.config.max_buyin:
-                    await self.conn.send_to_player(self.table_id, user_id, {
+                    await self._send_to_player(user_id, {
                         "type": ServerMsg.ERROR,
                         "message": f"Stack would exceed max buy-in ({self.config.max_buyin})",
+                        "code": "max_buyin_exceeded", "command_id": command_id,
                     })
                     return
                 # Debit balance from DB
@@ -1199,9 +1385,21 @@ class PokerTable:
                             user_id, amount, tx_type="buyin",
                             reference_id=f"table:{self.table_id}:topup",
                         )
-                    except Exception as e:
-                        await self.conn.send_to_player(self.table_id, user_id, {
-                            "type": ServerMsg.ERROR, "message": str(e),
+                    except InsufficientBalance:
+                        await self._send_to_player(user_id, {
+                            "type": ServerMsg.ERROR,
+                            "code": "insufficient_balance",
+                            "message": "Insufficient wallet balance for this top-up",
+                            "command_id": command_id,
+                        })
+                        return
+                    except Exception:
+                        log.exception("Top-up debit failed: table=%s user=%d", self.table_id, user_id)
+                        await self._send_to_player(user_id, {
+                            "type": ServerMsg.ERROR,
+                            "code": "topup_failed",
+                            "message": "Unable to complete top-up",
+                            "command_id": command_id,
                         })
                         return
                 seat.stack = new_stack
@@ -1247,31 +1445,111 @@ class PokerTable:
         winners = self._last_result["winners"] if showing else []
         shown_cards = self._last_result["shown_cards"] if showing else {}
 
-        return {
-            "type": ServerMsg.TABLE_STATE,
-            "table_id": self.table_id,
-            "table_name": self.config.name,
-            "seats": seats_data,
-            "community": [str(c) for c in self.community],
-            "pots": [p.to_dict() for p in self._calculate_current_pots()],
-            "dealer": self.dealer_seat,
-            "action_on": self.action_on,
-            "street": self.street.value,
-            "phase": self.phase.value,
-            "your_cards": your_cards,
-            "hand_num": self.hand_number,
-            "seed_hash": self.deck.seed_hash if self.hand_number > 0 else None,
-            "winners": winners,
-            "shown_cards": shown_cards,
-            "blinds": {
+        snapshot = TableStateMessage(
+            stream_id=self.stream_id,
+            revision=self._revision,
+            table_id=self.table_id,
+            table_name=self.config.name,
+            seats=seats_data,
+            community=[str(c) for c in self.community],
+            pots=[p.to_dict() for p in self._calculate_current_pots()],
+            dealer=self.dealer_seat,
+            action_on=self.action_on,
+            street=self.street.value,
+            phase=self.phase.value,
+            your_cards=your_cards,
+            hand_num=self.hand_number,
+            seed_hash=self.deck.seed_hash if self.hand_number > 0 else None,
+            winners=winners,
+            shown_cards=shown_cards,
+            blinds={
                 "small": self.config.small_blind,
                 "big": self.config.big_blind,
             },
-        }
+        )
+        return snapshot.model_dump(mode="json", exclude_none=False)
+
+    async def bootstrap_connection(self, user_id: int, websocket) -> bool:
+        """Activate a connection with an authoritative snapshot as frame one.
+
+        The table event lock prevents a newer public revision from being
+        delivered while the personalized snapshot/prompt pair is assembled and
+        queued. The connection manager keeps the socket invisible to broadcasts
+        until all bootstrap frames have been sent.
+        """
+        async with self._event_lock:
+            reconnected_seat = self._restore_reconnected_seat(user_id)
+            if reconnected_seat is not None:
+                # Existing ready subscribers see the status transition. The new
+                # socket is still not-ready and receives it through its snapshot.
+                await self._broadcast_locked({
+                    "type": ServerMsg.SEAT_UPDATE,
+                    **reconnected_seat.to_public_dict(),
+                })
+
+            prompt = None
+            if self.action_on >= 0 and self.phase == HandPhase.BETTING:
+                seat = self.seats[self.action_on]
+                if seat and seat.user_id == user_id and seat.is_active:
+                    # Build this first because it may create/bump a missing turn
+                    # token. The snapshot must carry the resulting revision.
+                    prompt = self.get_action_prompt_for(seat)
+
+            messages = [self.get_state_for_player(user_id)]
+            if prompt is not None:
+                messages.append(prompt)
+            return await self.conn.activate_connection(
+                self.table_id, user_id, websocket, messages
+            )
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @property
+    def revision(self) -> int:
+        """Current monotonic protocol revision for this table instance."""
+        return self._revision
+
+    def _bump_revision(self) -> int:
+        self._revision += 1
+        return self._revision
+
+    def get_action_prompt_for(
+        self, seat: PlayerSeat, valid: list[ActionType] | None = None
+    ) -> dict:
+        """Build the personalized authoritative prompt for the current turn."""
+        if self._current_prompt_id is None:
+            self._current_prompt_id = str(uuid4())
+            self._bump_revision()
+        if valid is None:
+            valid = self._get_valid_actions(seat)
+        prompt = ActionPromptMessage(
+            stream_id=self.stream_id,
+            revision=self._revision,
+            valid=[action.value for action in valid],
+            call_amount=max(0, self.current_bet - seat.current_bet),
+            min_raise=self.current_bet + self.min_raise,
+            max_raise=seat.stack + seat.current_bet,
+            timeout=ACTION_TIMEOUT,
+            prompt_id=self._current_prompt_id,
+            turn_token=self._current_prompt_id,
+        )
+        return prompt.model_dump(mode="json")
+
+    async def _send_to_player(self, user_id: int, msg: dict) -> None:
+        """Send a private event stamped with this table's current revision."""
+        payload = add_server_metadata(msg, self._revision, self.stream_id)
+        SERVER_MESSAGE_ADAPTER.validate_python(payload)
+        await self.conn.send_to_player(
+            self.table_id,
+            user_id,
+            payload,
+        )
+
+    async def broadcast_chat(self, msg: dict) -> None:
+        """Publish chat through the same ordered event stream as table events."""
+        await self._broadcast(msg)
 
     def _active_player_count(self) -> int:
         """Count players who can participate in a hand."""
@@ -1288,5 +1566,20 @@ class PokerTable:
         ]
 
     async def _broadcast(self, msg: dict) -> None:
-        """Send a message to all connected players at this table."""
-        await self.conn.broadcast_table(self.table_id, msg)
+        """Send an ordered, versioned event to all table connections."""
+        async with self._event_lock:
+            await self._broadcast_locked(msg)
+
+    async def _broadcast_locked(self, msg: dict) -> None:
+        """Broadcast while the caller owns ``_event_lock``."""
+        revision = self._revision + 1
+        payload = add_server_metadata(msg, revision, self.stream_id)
+        # The same canonical models that generate the frontend schema guard the
+        # real outbound boundary. Invalid events fail before revision commit or
+        # delivery instead of poisoning client connections.
+        SERVER_MESSAGE_ADAPTER.validate_python(payload)
+        self._revision = revision
+        await self.conn.broadcast_table(
+            self.table_id,
+            payload,
+        )

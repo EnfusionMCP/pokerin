@@ -18,7 +18,7 @@ def hand_key(cards):
     return f"{r1}{r2}{suited}"
 
 async def bot(name, token, table):
-    url = f"wss://pokerin.space/ws/table/{table}?token={token}"
+    url = f"wss://pokerin.space/ws/table/{table}"
     cards = []
     seated = False
     seats = []
@@ -34,6 +34,11 @@ async def bot(name, token, table):
     while True:
         try:
             async with websockets.connect(url) as ws:
+                await ws.send(json.dumps({
+                    "type": "auth",
+                    "token": token,
+                    "schema_version": 1,
+                }))
                 log.info("[%s] Connected", name)
                 seated = False
                 async for raw in ws:
@@ -122,4 +127,5 @@ async def main():
         await asyncio.sleep(1.5)
     await asyncio.gather(*tasks)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

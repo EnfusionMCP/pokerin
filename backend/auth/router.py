@@ -14,7 +14,7 @@ from ..deps import get_current_user
 from ..models.ledger import Transaction
 from ..models.user import User
 from . import jwt as app_jwt
-from .sso import build_auth_url, exchange_code, parse_character_from_jwt
+from .sso import SSOFlowError, build_auth_url, exchange_code, parse_character_from_jwt
 
 log = logging.getLogger(__name__)
 
@@ -38,16 +38,20 @@ async def callback(
     """Handle EVE SSO callback — exchange code, upsert user, issue app JWT."""
     try:
         token_data = await exchange_code(code, state)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except SSOFlowError:
+        raise HTTPException(
+            status_code=400,
+            detail="EVE SSO login could not be completed",
+        ) from None
 
     access_token = token_data["access_token"]
-    refresh_token = token_data.get("refresh_token", "")
-
     try:
         character_id, character_name = parse_character_from_jwt(access_token)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse EVE token: {e}")
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="EVE SSO returned an invalid identity token",
+        ) from None
 
     portrait_url = f"https://images.evetech.net/characters/{character_id}/portrait?size=128"
 
@@ -62,7 +66,6 @@ async def callback(
             character_id=character_id,
             character_name=character_name,
             portrait_url=portrait_url,
-            refresh_token=refresh_token,
             last_login=datetime.now(timezone.utc),
         )
         session.add(user)
@@ -117,7 +120,6 @@ async def callback(
     else:
         user.character_name = character_name
         user.portrait_url = portrait_url
-        user.refresh_token = refresh_token
         user.last_login = datetime.now(timezone.utc)
         log.info("User logged in: %s (char %d)", character_name, character_id)
 

@@ -76,12 +76,17 @@ class BotPlayer:
     async def run(self):
         protocol = "wss" if "https" in self.base_url else "ws"
         host = self.base_url.replace("https://", "").replace("http://", "")
-        url = f"{protocol}://{host}/ws/table/{self.table_id}?token={self.token}"
+        url = f"{protocol}://{host}/ws/table/{self.table_id}"
 
         while True:
             try:
                 async with websockets.connect(url) as ws:
                     self.ws = ws
+                    await ws.send(json.dumps({
+                        "type": "auth",
+                        "token": self.token,
+                        "schema_version": 1,
+                    }))
                     log.info("[%s] Connected to %s", self.name, self.table_id)
                     async for raw in ws:
                         try:

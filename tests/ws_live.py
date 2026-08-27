@@ -7,12 +7,20 @@ player privately receives their own hole cards), the betting protocol
 and DB tests don't cover.
 
 Run inside the docker network against the running 'pokerin-live' server:
-    python tests/ws_live.py
+    python -m tests.ws_live
 """
 
 import asyncio
 import json
 import sys
+
+from tests.db_safety import (
+    configure_disposable_test_database,
+    verify_configured_test_engine,
+    verify_connected_database,
+)
+
+_TEST_DATABASE_URL = configure_disposable_test_database()
 
 import websockets
 from sqlalchemy import update
@@ -21,6 +29,8 @@ from backend.db import async_session, engine
 from backend.models.user import User
 from backend.auth.jwt import create_token
 
+verify_configured_test_engine(engine, _TEST_DATABASE_URL)
+
 WS = "ws://pokerin-live:8080/ws/table/micro-1"
 TABLE_MIN_BUYIN = 400_000_000   # micro-1 min buy-in (ISK-cents)
 RUN_SECONDS = 55
@@ -28,6 +38,7 @@ RUN_SECONDS = 55
 
 async def fund(user_ids, balance):
     async with async_session() as s:
+        await verify_connected_database(s, _TEST_DATABASE_URL)
         for uid in user_ids:
             await s.execute(update(User).where(User.id == uid).values(balance=balance))
         await s.commit()

@@ -7,6 +7,8 @@ sender character_id to registered users. No deposit codes needed.
 import asyncio
 import logging
 import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import select
@@ -20,55 +22,185 @@ log = logging.getLogger(__name__)
 
 ESI_BASE = "https://esi.evetech.net/latest"
 POLL_INTERVAL = 60  # seconds
+DEPOSIT_INITIAL_GRACE_SECONDS = POLL_INTERVAL * 5
+DEPOSIT_STALE_AFTER_SECONDS = POLL_INTERVAL * 5
+
+
+class DepositUpstreamError(RuntimeError):
+    """A stable error that never carries an upstream body or credential."""
+
+
+@dataclass
+class DepositHealth:
+    """In-process readiness state for the deposit poller.
+
+    A short grace/staleness window keeps a transient ESI outage from blocking
+    the application immediately, while a poller that never succeeds (or stops
+    succeeding) eventually makes readiness fail closed.
+    """
+
+    configured: bool
+    started_monotonic: float = field(default_factory=time.monotonic)
+    last_success_monotonic: float | None = None
+    last_success_at: datetime | None = None
+    consecutive_failures: int = 0
+
+    def mark_success(self) -> None:
+        self.last_success_monotonic = time.monotonic()
+        self.last_success_at = datetime.now(timezone.utc)
+        self.consecutive_failures = 0
+
+    def mark_failure(self) -> None:
+        self.consecutive_failures += 1
+
+    def snapshot(
+        self,
+        *,
+        supervisor_running: bool,
+        now_monotonic: float | None = None,
+    ) -> tuple[bool, dict[str, object]]:
+        now = time.monotonic() if now_monotonic is None else now_monotonic
+        component: dict[str, object] = {
+            "configured": self.configured,
+            "supervisor": "running" if supervisor_running else "stopped",
+            "last_success": (
+                self.last_success_at.isoformat()
+                if self.last_success_at is not None
+                else None
+            ),
+        }
+        if not self.configured:
+            component["status"] = "disabled"
+            return False, component
+        if not supervisor_running:
+            component["status"] = "stopped"
+            return False, component
+
+        if self.last_success_monotonic is None:
+            within_grace = (
+                now - self.started_monotonic <= DEPOSIT_INITIAL_GRACE_SECONDS
+            )
+            if within_grace:
+                component["status"] = (
+                    "starting" if self.consecutive_failures == 0 else "degraded"
+                )
+            else:
+                component["status"] = "failing"
+            return within_grace, component
+
+        last_success_age = now - self.last_success_monotonic
+        if last_success_age > DEPOSIT_STALE_AFTER_SECONDS:
+            component["status"] = "stale"
+            return False, component
+        component["status"] = (
+            "ok" if self.consecutive_failures == 0 else "degraded"
+        )
+        return True, component
 
 
 async def _refresh_bank_token() -> str:
     """Refresh the bank character's ESI access token."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{settings.eve_sso_base}/v2/oauth/token",
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": settings.bank_refresh_token,
-                "client_id": settings.bank_client_id or settings.eve_client_id,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-    if resp.status_code != 200:
-        raise RuntimeError(f"Bank token refresh failed: {resp.status_code} {resp.text}")
-    return resp.json()["access_token"]
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{settings.eve_sso_base}/v2/oauth/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": settings.bank_refresh_token,
+                    "client_id": settings.bank_client_id or settings.eve_client_id,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+    except Exception:
+        log.warning("Bank token refresh request failed")
+        raise DepositUpstreamError("Bank token refresh failed") from None
+
+    if response.status_code != 200:
+        log.warning("Bank token refresh returned HTTP %d", response.status_code)
+        raise DepositUpstreamError("Bank token refresh failed")
+    try:
+        payload = response.json()
+    except Exception:
+        log.warning("Bank token refresh returned an invalid response")
+        raise DepositUpstreamError("Bank token refresh failed") from None
+    if not isinstance(payload, dict):
+        log.warning("Bank token refresh returned a non-object response")
+        raise DepositUpstreamError("Bank token refresh failed")
+    access_token = payload.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        log.warning("Bank token refresh response omitted its access token")
+        raise DepositUpstreamError("Bank token refresh failed")
+    return access_token
 
 
 async def _fetch_wallet_journal(access_token: str, since_ref_id: int = 0) -> list[dict]:
     """Fetch wallet journal pages from ESI, stopping when we reach already-seen entries."""
     all_entries: list[dict] = []
     page = 1
-    async with httpx.AsyncClient() as client:
-        while True:
-            resp = await client.get(
-                f"{ESI_BASE}/characters/{settings.bank_character_id}/wallet/journal/",
-                headers={"Authorization": f"Bearer {access_token}"},
-                params={"page": page},
-            )
-            if resp.status_code == 304:
-                break
-            if resp.status_code in (401, 403):
-                raise RuntimeError(f"ESI auth failed: {resp.status_code}")
-            if resp.status_code != 200:
-                log.warning("ESI wallet journal page %d returned %d", page, resp.status_code)
-                break
-            entries = resp.json()
-            if not entries:
-                break
-            all_entries.extend(entries)
-            # If the oldest entry on this page is already processed, no need for more pages
-            oldest_on_page = min(e.get("id", 0) for e in entries)
-            if oldest_on_page <= since_ref_id:
-                break
-            total_pages = int(resp.headers.get("x-pages", "1"))
-            if page >= total_pages:
-                break
-            page += 1
+    try:
+        async with httpx.AsyncClient() as client:
+            while True:
+                response = await client.get(
+                    f"{ESI_BASE}/characters/{settings.bank_character_id}/wallet/journal/",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params={"page": page},
+                )
+                if response.status_code in (401, 403):
+                    raise DepositUpstreamError("ESI wallet authorization failed")
+                if response.status_code != 200:
+                    log.warning(
+                        "ESI wallet journal page %d returned HTTP %d",
+                        page,
+                        response.status_code,
+                    )
+                    # Never return entries from earlier pages after a later
+                    # page fails. Advancing the cursor from a partial result
+                    # would permanently skip deposits on the failed page.
+                    raise DepositUpstreamError("ESI wallet journal request failed")
+                entries = response.json()
+                if not isinstance(entries, list):
+                    raise DepositUpstreamError("ESI wallet journal response was invalid")
+                raw_total_pages = response.headers.get("x-pages")
+                if raw_total_pages is None:
+                    raise DepositUpstreamError(
+                        "ESI wallet journal pagination was missing"
+                    )
+                total_pages = int(raw_total_pages)
+                if total_pages < page:
+                    raise DepositUpstreamError(
+                        "ESI wallet journal pagination was invalid"
+                    )
+                if not entries:
+                    if page == 1 and total_pages == 1:
+                        break
+                    raise DepositUpstreamError(
+                        "ESI wallet journal returned an incomplete page"
+                    )
+                entry_ids: list[int] = []
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        raise DepositUpstreamError(
+                            "ESI wallet journal entry was invalid"
+                        )
+                    entry_id = entry.get("id")
+                    if type(entry_id) is not int or entry_id <= 0:
+                        raise DepositUpstreamError(
+                            "ESI wallet journal entry identifier was invalid"
+                        )
+                    entry_ids.append(entry_id)
+                all_entries.extend(entries)
+                # If the oldest entry on this page is already processed, no need for more pages
+                oldest_on_page = min(entry_ids)
+                if oldest_on_page <= since_ref_id:
+                    break
+                if page >= total_pages:
+                    break
+                page += 1
+    except DepositUpstreamError:
+        raise
+    except Exception:
+        log.warning("ESI wallet journal request or response failed")
+        raise DepositUpstreamError("ESI wallet journal request failed") from None
     return all_entries
 
 
@@ -115,9 +247,12 @@ async def _process_deposit(sender_char_id: int, amount: float, esi_ref_id: int) 
                  user.id, user.character_name, amount)
 
 
-async def deposit_poll_loop() -> None:
+async def deposit_poll_loop(health: DepositHealth | None = None) -> None:
     """Main loop: poll ESI wallet journal and process deposits."""
-    if not settings.bank_character_id or not settings.bank_refresh_token:
+    configured = bool(settings.bank_character_id and settings.bank_refresh_token)
+    if health is None:
+        health = DepositHealth(configured=configured)
+    if not configured:
         log.warning("Bank character not configured — deposit worker disabled")
         return
 
@@ -157,8 +292,17 @@ async def deposit_poll_loop() -> None:
 
                 last_ref_id = max(last_ref_id, ref_id)
 
-        except Exception as e:
-            log.error("Deposit poll error: %s", e)
+            health.mark_success()
+
+        except DepositUpstreamError:
+            health.mark_failure()
+            log.error("Deposit poll upstream operation failed; retrying")
+            access_token = ""
+        except Exception:
+            health.mark_failure()
+            # SQL/client exceptions can include parameters, response fragments,
+            # or authorization data. Never interpolate arbitrary exception text.
+            log.error("Deposit poll failed with an internal error; retrying")
             access_token = ""
 
         await asyncio.sleep(POLL_INTERVAL)

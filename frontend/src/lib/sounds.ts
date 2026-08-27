@@ -24,8 +24,9 @@ export function isEnabled() {
 }
 
 // Stub sound triggers — wire these up to actual audio files later
-function _play(_name: string) {
+function _play(name: string) {
   if (!enabled || volume <= 0) return;
+  void name;
   // TODO: load and play audio buffer
   // const ctx = new AudioContext();
   // const source = ctx.createBufferSource();

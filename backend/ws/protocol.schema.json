@@ -1,0 +1,1772 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "client_messages": {
+    "$defs": {
+      "ActionCommand": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "schema_version": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "schema_version"
+              ]
+            },
+            "then": {
+              "required": [
+                "prompt_id",
+                "turn_token"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "fold",
+              "check",
+              "call",
+              "bet",
+              "raise",
+              "allin"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "amount": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Command Id"
+          },
+          "prompt_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Prompt Id"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "const": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Schema Version"
+          },
+          "turn_token": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Turn Token"
+          },
+          "type": {
+            "const": "action",
+            "default": "action",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "type"
+        ],
+        "title": "ActionCommand",
+        "type": "object"
+      },
+      "AddChipsCommand": {
+        "properties": {
+          "amount": {
+            "exclusiveMinimum": 0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Command Id"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "const": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Schema Version"
+          },
+          "type": {
+            "const": "add_chips",
+            "default": "add_chips",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "amount",
+          "type"
+        ],
+        "title": "AddChipsCommand",
+        "type": "object"
+      },
+      "AuthMessage": {
+        "properties": {
+          "schema_version": {
+            "anyOf": [
+              {
+                "const": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Schema Version"
+          },
+          "token": {
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          },
+          "type": {
+            "const": "auth",
+            "default": "auth",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "type"
+        ],
+        "title": "AuthMessage",
+        "type": "object"
+      },
+      "ChatCommand": {
+        "properties": {
+          "command_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Command Id"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "const": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Schema Version"
+          },
+          "text": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "chat",
+            "default": "chat",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "type"
+        ],
+        "title": "ChatCommand",
+        "type": "object"
+      },
+      "SitCommand": {
+        "properties": {
+          "buyin": {
+            "exclusiveMinimum": 0,
+            "title": "Buyin",
+            "type": "integer"
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Command Id"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "const": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Schema Version"
+          },
+          "seat": {
+            "minimum": 0,
+            "title": "Seat",
+            "type": "integer"
+          },
+          "type": {
+            "const": "sit",
+            "default": "sit",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seat",
+          "buyin",
+          "type"
+        ],
+        "title": "SitCommand",
+        "type": "object"
+      },
+      "StandCommand": {
+        "properties": {
+          "command_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Command Id"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "const": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Schema Version"
+          },
+          "type": {
+            "const": "stand",
+            "default": "stand",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "StandCommand",
+        "type": "object"
+      }
+    },
+    "discriminator": {
+      "mapping": {
+        "action": "#/$defs/ActionCommand",
+        "add_chips": "#/$defs/AddChipsCommand",
+        "auth": "#/$defs/AuthMessage",
+        "chat": "#/$defs/ChatCommand",
+        "sit": "#/$defs/SitCommand",
+        "stand": "#/$defs/StandCommand"
+      },
+      "propertyName": "type"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/AuthMessage"
+      },
+      {
+        "$ref": "#/$defs/SitCommand"
+      },
+      {
+        "$ref": "#/$defs/StandCommand"
+      },
+      {
+        "$ref": "#/$defs/ActionCommand"
+      },
+      {
+        "$ref": "#/$defs/AddChipsCommand"
+      },
+      {
+        "$ref": "#/$defs/ChatCommand"
+      }
+    ]
+  },
+  "generated_from": "backend.ws.protocol",
+  "schema_version": 1,
+  "server_messages": {
+    "$defs": {
+      "AckMessage": {
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Command Id",
+            "type": "string"
+          },
+          "command_type": {
+            "enum": [
+              "sit",
+              "stand",
+              "action",
+              "add_chips",
+              "chat"
+            ],
+            "title": "Command Type",
+            "type": "string"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "status": {
+            "const": "received",
+            "title": "Status",
+            "type": "string"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "ack",
+            "default": "ack",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream_id",
+          "command_id",
+          "command_type",
+          "status",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "AckMessage",
+        "type": "object"
+      },
+      "ActionOnMessage": {
+        "properties": {
+          "prompt_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Prompt Id",
+            "type": "string"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "seat": {
+            "minimum": 0,
+            "title": "Seat",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "timeout": {
+            "minimum": 0,
+            "title": "Timeout",
+            "type": "number"
+          },
+          "turn_token": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Turn Token",
+            "type": "string"
+          },
+          "type": {
+            "const": "action_on",
+            "default": "action_on",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream_id",
+          "seat",
+          "timeout",
+          "prompt_id",
+          "turn_token",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "ActionOnMessage",
+        "type": "object"
+      },
+      "ActionPromptMessage": {
+        "properties": {
+          "call_amount": {
+            "minimum": 0,
+            "title": "Call Amount",
+            "type": "integer"
+          },
+          "max_raise": {
+            "minimum": 0,
+            "title": "Max Raise",
+            "type": "integer"
+          },
+          "min_raise": {
+            "minimum": 0,
+            "title": "Min Raise",
+            "type": "integer"
+          },
+          "prompt_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Prompt Id",
+            "type": "string"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "timeout": {
+            "minimum": 0,
+            "title": "Timeout",
+            "type": "number"
+          },
+          "turn_token": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Turn Token",
+            "type": "string"
+          },
+          "type": {
+            "const": "action_prompt",
+            "default": "action_prompt",
+            "title": "Type",
+            "type": "string"
+          },
+          "valid": {
+            "items": {
+              "enum": [
+                "fold",
+                "check",
+                "call",
+                "bet",
+                "raise",
+                "allin"
+              ],
+              "type": "string"
+            },
+            "title": "Valid",
+            "type": "array"
+          }
+        },
+        "required": [
+          "stream_id",
+          "valid",
+          "call_amount",
+          "min_raise",
+          "max_raise",
+          "timeout",
+          "prompt_id",
+          "turn_token",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "ActionPromptMessage",
+        "type": "object"
+      },
+      "BankTimeStartMessage": {
+        "properties": {
+          "duration": {
+            "minimum": 0,
+            "title": "Duration",
+            "type": "number"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "seat": {
+            "minimum": 0,
+            "title": "Seat",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "bank_time_start",
+            "default": "bank_time_start",
+            "title": "Type",
+            "type": "string"
+          },
+          "user_id": {
+            "minimum": 0,
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stream_id",
+          "seat",
+          "user_id",
+          "duration",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "BankTimeStartMessage",
+        "type": "object"
+      },
+      "BlindsData": {
+        "additionalProperties": false,
+        "properties": {
+          "big": {
+            "minimum": 0,
+            "title": "Big",
+            "type": "integer"
+          },
+          "small": {
+            "minimum": 0,
+            "title": "Small",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "small",
+          "big"
+        ],
+        "title": "BlindsData",
+        "type": "object"
+      },
+      "ChatMessage": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "chat",
+            "default": "chat",
+            "title": "Type",
+            "type": "string"
+          },
+          "user_id": {
+            "minimum": 0,
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stream_id",
+          "user_id",
+          "name",
+          "text",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "ChatMessage",
+        "type": "object"
+      },
+      "CommunityMessage": {
+        "properties": {
+          "board": {
+            "items": {
+              "pattern": "^[2-9TJQKA][cdhs]$",
+              "type": "string"
+            },
+            "title": "Board",
+            "type": "array"
+          },
+          "cards": {
+            "items": {
+              "pattern": "^[2-9TJQKA][cdhs]$",
+              "type": "string"
+            },
+            "title": "Cards",
+            "type": "array"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "street": {
+            "enum": [
+              "preflop",
+              "flop",
+              "turn",
+              "river",
+              "showdown"
+            ],
+            "title": "Street",
+            "type": "string"
+          },
+          "type": {
+            "const": "community",
+            "default": "community",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream_id",
+          "street",
+          "cards",
+          "board",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "CommunityMessage",
+        "type": "object"
+      },
+      "DealMessage": {
+        "properties": {
+          "cards": {
+            "items": {
+              "pattern": "^[2-9TJQKA][cdhs]$",
+              "type": "string"
+            },
+            "title": "Cards",
+            "type": "array"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "deal",
+            "default": "deal",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream_id",
+          "cards",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "DealMessage",
+        "type": "object"
+      },
+      "ErrorMessage": {
+        "properties": {
+          "code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Command Id"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Details"
+          },
+          "message": {
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "error",
+            "default": "error",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream_id",
+          "code",
+          "message",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "ErrorMessage",
+        "type": "object"
+      },
+      "HandResultMessage": {
+        "properties": {
+          "community": {
+            "items": {
+              "pattern": "^[2-9TJQKA][cdhs]$",
+              "type": "string"
+            },
+            "title": "Community",
+            "type": "array"
+          },
+          "pots": {
+            "items": {
+              "$ref": "#/$defs/PotData"
+            },
+            "title": "Pots",
+            "type": "array"
+          },
+          "rake": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rake"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "server_seed": {
+            "title": "Server Seed",
+            "type": "string"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "shown_cards": {
+            "additionalProperties": {
+              "items": {
+                "pattern": "^[2-9TJQKA][cdhs]$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Shown Cards",
+            "type": "object"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "hand_result",
+            "default": "hand_result",
+            "title": "Type",
+            "type": "string"
+          },
+          "winners": {
+            "items": {
+              "$ref": "#/$defs/WinnerData"
+            },
+            "title": "Winners",
+            "type": "array"
+          }
+        },
+        "required": [
+          "stream_id",
+          "community",
+          "winners",
+          "shown_cards",
+          "pots",
+          "server_seed",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "HandResultMessage",
+        "type": "object"
+      },
+      "HandStartMessage": {
+        "properties": {
+          "dealer": {
+            "title": "Dealer",
+            "type": "integer"
+          },
+          "hand_num": {
+            "minimum": 0,
+            "title": "Hand Num",
+            "type": "integer"
+          },
+          "pot": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pot"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "seats": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/SeatData"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seats"
+          },
+          "seed_hash": {
+            "minLength": 1,
+            "title": "Seed Hash",
+            "type": "string"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "hand_start",
+            "default": "hand_start",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream_id",
+          "hand_num",
+          "seed_hash",
+          "dealer",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "HandStartMessage",
+        "type": "object"
+      },
+      "PlayerActionMessage": {
+        "properties": {
+          "action": {
+            "enum": [
+              "fold",
+              "check",
+              "call",
+              "bet",
+              "raise",
+              "allin"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "action_on": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Action On"
+          },
+          "amount": {
+            "minimum": 0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "current_bet": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Current Bet"
+          },
+          "pot": {
+            "minimum": 0,
+            "title": "Pot",
+            "type": "integer"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "seat": {
+            "minimum": 0,
+            "title": "Seat",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "stack": {
+            "minimum": 0,
+            "title": "Stack",
+            "type": "integer"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "waiting",
+                  "active",
+                  "folded",
+                  "allin",
+                  "sitting_out"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "player_action",
+            "default": "player_action",
+            "title": "Type",
+            "type": "string"
+          },
+          "user_id": {
+            "minimum": 0,
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stream_id",
+          "seat",
+          "user_id",
+          "action",
+          "amount",
+          "stack",
+          "pot",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "PlayerActionMessage",
+        "type": "object"
+      },
+      "PotData": {
+        "properties": {
+          "amount": {
+            "minimum": 0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "eligible": {
+            "items": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "title": "Eligible",
+            "type": "array"
+          }
+        },
+        "required": [
+          "amount",
+          "eligible"
+        ],
+        "title": "PotData",
+        "type": "object"
+      },
+      "SeatData": {
+        "properties": {
+          "current_bet": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Current Bet"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "portrait": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Portrait"
+          },
+          "seat": {
+            "minimum": 0,
+            "title": "Seat",
+            "type": "integer"
+          },
+          "stack": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stack"
+          },
+          "status": {
+            "enum": [
+              "empty",
+              "waiting",
+              "active",
+              "folded",
+              "allin",
+              "sitting_out"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "seat",
+          "status"
+        ],
+        "title": "SeatData",
+        "type": "object"
+      },
+      "SeatUpdateMessage": {
+        "properties": {
+          "current_bet": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Current Bet"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "portrait": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Portrait"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "seat": {
+            "minimum": 0,
+            "title": "Seat",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "stack": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stack"
+          },
+          "status": {
+            "enum": [
+              "empty",
+              "waiting",
+              "active",
+              "folded",
+              "allin",
+              "sitting_out"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "seat_update",
+            "default": "seat_update",
+            "title": "Type",
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "seat",
+          "status",
+          "stream_id",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "SeatUpdateMessage",
+        "type": "object"
+      },
+      "TableStateMessage": {
+        "properties": {
+          "action_on": {
+            "title": "Action On",
+            "type": "integer"
+          },
+          "blinds": {
+            "$ref": "#/$defs/BlindsData"
+          },
+          "community": {
+            "items": {
+              "pattern": "^[2-9TJQKA][cdhs]$",
+              "type": "string"
+            },
+            "title": "Community",
+            "type": "array"
+          },
+          "dealer": {
+            "title": "Dealer",
+            "type": "integer"
+          },
+          "hand_num": {
+            "minimum": 0,
+            "title": "Hand Num",
+            "type": "integer"
+          },
+          "phase": {
+            "enum": [
+              "idle",
+              "posting",
+              "dealing",
+              "betting",
+              "showdown",
+              "complete"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "pots": {
+            "items": {
+              "$ref": "#/$defs/PotData"
+            },
+            "title": "Pots",
+            "type": "array"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "seats": {
+            "items": {
+              "$ref": "#/$defs/SeatData"
+            },
+            "title": "Seats",
+            "type": "array"
+          },
+          "seed_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seed Hash"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "shown_cards": {
+            "additionalProperties": {
+              "items": {
+                "pattern": "^[2-9TJQKA][cdhs]$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Shown Cards",
+            "type": "object"
+          },
+          "stream_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "street": {
+            "enum": [
+              "preflop",
+              "flop",
+              "turn",
+              "river",
+              "showdown"
+            ],
+            "title": "Street",
+            "type": "string"
+          },
+          "table_id": {
+            "title": "Table Id",
+            "type": "string"
+          },
+          "table_name": {
+            "title": "Table Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "table_state",
+            "default": "table_state",
+            "title": "Type",
+            "type": "string"
+          },
+          "winners": {
+            "items": {
+              "$ref": "#/$defs/WinnerData"
+            },
+            "title": "Winners",
+            "type": "array"
+          },
+          "your_cards": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[2-9TJQKA][cdhs]$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Your Cards"
+          }
+        },
+        "required": [
+          "stream_id",
+          "table_id",
+          "table_name",
+          "seats",
+          "community",
+          "pots",
+          "dealer",
+          "action_on",
+          "street",
+          "phase",
+          "hand_num",
+          "blinds",
+          "schema_version",
+          "revision",
+          "server_time",
+          "type"
+        ],
+        "title": "TableStateMessage",
+        "type": "object"
+      },
+      "WinnerData": {
+        "properties": {
+          "amount": {
+            "minimum": 0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "hand": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Hand"
+          },
+          "seat": {
+            "minimum": 0,
+            "title": "Seat",
+            "type": "integer"
+          },
+          "user_id": {
+            "minimum": 0,
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seat",
+          "user_id",
+          "amount"
+        ],
+        "title": "WinnerData",
+        "type": "object"
+      }
+    },
+    "discriminator": {
+      "mapping": {
+        "ack": "#/$defs/AckMessage",
+        "action_on": "#/$defs/ActionOnMessage",
+        "action_prompt": "#/$defs/ActionPromptMessage",
+        "bank_time_start": "#/$defs/BankTimeStartMessage",
+        "chat": "#/$defs/ChatMessage",
+        "community": "#/$defs/CommunityMessage",
+        "deal": "#/$defs/DealMessage",
+        "error": "#/$defs/ErrorMessage",
+        "hand_result": "#/$defs/HandResultMessage",
+        "hand_start": "#/$defs/HandStartMessage",
+        "player_action": "#/$defs/PlayerActionMessage",
+        "seat_update": "#/$defs/SeatUpdateMessage",
+        "table_state": "#/$defs/TableStateMessage"
+      },
+      "propertyName": "type"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/TableStateMessage"
+      },
+      {
+        "$ref": "#/$defs/HandStartMessage"
+      },
+      {
+        "$ref": "#/$defs/DealMessage"
+      },
+      {
+        "$ref": "#/$defs/CommunityMessage"
+      },
+      {
+        "$ref": "#/$defs/PlayerActionMessage"
+      },
+      {
+        "$ref": "#/$defs/ActionOnMessage"
+      },
+      {
+        "$ref": "#/$defs/ActionPromptMessage"
+      },
+      {
+        "$ref": "#/$defs/HandResultMessage"
+      },
+      {
+        "$ref": "#/$defs/SeatUpdateMessage"
+      },
+      {
+        "$ref": "#/$defs/BankTimeStartMessage"
+      },
+      {
+        "$ref": "#/$defs/ChatMessage"
+      },
+      {
+        "$ref": "#/$defs/AckMessage"
+      },
+      {
+        "$ref": "#/$defs/ErrorMessage"
+      }
+    ]
+  }
+}

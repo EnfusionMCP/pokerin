@@ -1,0 +1,241 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python / engine / package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.10.11"
+          enable-cache: true
+      - name: Install locked development environment
+        run: uv sync --frozen --all-extras
+      - name: Check Python syntax
+        run: uv run python -m compileall -q backend tests alembic
+      - name: Verify backend protocol schema is committed
+        run: |
+          uv run python -m backend.ws.schema_export /tmp/protocol.schema.json
+          cmp --silent backend/ws/protocol.schema.json /tmp/protocol.schema.json
+      - name: Run non-destructive tests
+        run: uv run pytest -m "not integration" -q
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Export locked requirements
+        run: |
+          uv export --frozen --no-dev --no-emit-project \
+            --format requirements-txt --output-file /tmp/requirements.txt
+          uv export --frozen --all-extras --no-emit-project \
+            --format requirements-txt --output-file /tmp/requirements-all.txt
+      - name: Verify wheel contains every backend package
+        shell: bash
+        run: |
+          uv venv /tmp/pokerin-wheel
+          uv pip sync --python /tmp/pokerin-wheel/bin/python /tmp/requirements.txt
+          uv pip install --python /tmp/pokerin-wheel/bin/python --no-deps dist/*.whl
+          cd /tmp
+          /tmp/pokerin-wheel/bin/python - <<'PY'
+          import aiohttp
+          import aiosqlite
+          import backend.api.admin
+          import backend.auth.router
+          import backend.models.analytics
+          import backend.poker.table
+          import backend.services.bank
+          import backend.tools.bot_player
+          import backend.ws.router
+          PY
+      - name: Audit all locked Python dependencies
+        shell: bash
+        run: uv run pip-audit --requirement /tmp/requirements-all.txt --progress-spinner off
+
+  migrations-sqlite:
+    name: Alembic / SQLite round trip
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: sqlite+aiosqlite:////tmp/pokerin-migrations.db
+      JWT_SECRET: ci-only-not-a-production-secret
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.10.11"
+          enable-cache: true
+      - run: uv sync --frozen --extra dev
+      - name: Upgrade, downgrade, and re-upgrade
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+          test "$(uv run alembic heads | wc -l)" -eq 1
+
+  postgres-integration:
+    name: PostgreSQL / migrations / conservation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        env:
+          POSTGRES_USER: pokerin_test
+          POSTGRES_PASSWORD: only-for-ci-tests
+          POSTGRES_DB: pokerin_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pokerin_test -d pokerin_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      ENVIRONMENT: test
+      ALLOW_DESTRUCTIVE_TESTS: I_UNDERSTAND_THIS_WIPES_A_DISPOSABLE_TEST_DATABASE
+      TEST_DATABASE_URL: postgresql+asyncpg://pokerin_test:only-for-ci-tests@127.0.0.1:5432/pokerin_test
+      DATABASE_URL: postgresql+asyncpg://pokerin_test:only-for-ci-tests@127.0.0.1:5432/pokerin_test
+      JWT_SECRET: ci-only-not-a-production-secret
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.10.11"
+          enable-cache: true
+      - run: uv sync --frozen --extra dev
+      - name: Apply migrations
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+      - name: Run destructive integration test in disposable service
+        run: uv run pytest tests/test_postgres_integration.py -m integration -q
+
+  frontend:
+    name: Frontend / lint / typecheck / build / audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run protocol:check
+      - run: npm test
+      - run: npm run lint
+      - run: npx tsc --noEmit -p tsconfig.app.json
+      - run: npx tsc --noEmit -p tsconfig.node.json
+      - run: npm run build
+      - run: npm audit --audit-level=high
+
+  container:
+    name: Container / configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      POSTGRES_PASSWORD: ci-compose-only
+      BACKUP_DIR: /tmp/pokerin-ci-backups
+      BACKUP_DESTINATION_ID: ci-compose-validation
+      # Avoid the default public mirror's intermittent truncated downloads;
+      # this is Trivy's primary OCI database publication.
+      TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Create non-secret Compose environment
+        run: cp .env.example .env
+      - name: Validate Compose files
+        run: |
+          docker compose config --quiet
+          docker compose -f docker-compose.dev.yml config --quiet
+          docker compose -f docker-compose.dev.yml config --format json > /tmp/dev-compose.json
+          python3 -c 'import json; p=json.load(open("/tmp/dev-compose.json"))["services"]["postgres"]["ports"]; assert any(x.get("host_ip") == "127.0.0.1" and int(x["published"]) == 5432 for x in p)'
+          test -x deploy/deploy.sh
+          python3 -m py_compile deploy/check-empty-tables.py deploy/preflight.py deploy/wait-readiness.py
+          sh -n deploy/db-ops.sh
+          sh -n deploy/db-operation.sh
+          sh -n deploy/deploy.sh
+          sh -n deploy/migrate.sh
+          sh -n tests/caddy_log_redaction_integration.sh
+          sh -n tests/db_ops_postgres_integration.sh
+      - name: Lint deployment shell scripts
+        run: >-
+          docker run --rm --entrypoint shellcheck -v "$PWD:/mnt:ro"
+          koalaman/shellcheck-alpine:stable@sha256:c82fe42504fbc9fc68f15d36638e5ee2324ebb8b94e96a3c4e395bf361c49183
+          /mnt/deploy/db-ops.sh /mnt/deploy/db-operation.sh
+          /mnt/deploy/deploy.sh /mnt/deploy/migrate.sh /mnt/deploy/setup-vps.sh
+          /mnt/tests/caddy_log_redaction_integration.sh
+          /mnt/tests/db_ops_postgres_integration.sh
+      - name: Exercise real PostgreSQL backup and disposable restore
+        run: sh tests/db_ops_postgres_integration.sh
+      - name: Validate Caddy configuration
+        run: docker build --file Dockerfile.frontend --tag pokerin-web:ci .
+      - name: Exercise Caddy runtime log redaction
+        run: sh tests/caddy_log_redaction_integration.sh pokerin-web:ci
+      - name: Build locked application image
+        run: docker build --tag pokerin:ci .
+      - name: Scan image filesystem
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: pokerin:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+      - name: Scan web image filesystem
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: pokerin-web:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

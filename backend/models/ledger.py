@@ -2,7 +2,17 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..db import Base
@@ -16,6 +26,10 @@ class Transaction(Base):
     sum, periodically verified against this table.
     """
     __tablename__ = "transactions"
+    __table_args__ = (
+        UniqueConstraint("esi_ref_id", name="uq_transactions_esi_ref_id"),
+        Index("ix_transactions_esi_ref_id", "esi_ref_id"),
+    )
 
     # BigInteger on Postgres; Integer on SQLite so the PK auto-increments in
     # local dev (SQLite only auto-increments INTEGER PRIMARY KEY). No effect on
@@ -34,7 +48,7 @@ class Transaction(Base):
     reference_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # ESI journal ref ID for deposit verification (indexed for dedup lookups)
-    esi_ref_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, unique=True, index=True)
+    esi_ref_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

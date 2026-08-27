@@ -1,3 +1,14 @@
+{
+	# Runtime/reverse-proxy errors are separate from access logs. Apply the
+	# same request-target redaction before they reach container stderr.
+	log default {
+		format filter {
+			request>uri regexp `\?.*$` ``
+			request>headers>Referer delete
+		}
+	}
+}
+
 pokerin.space {
 	# Security headers on all responses
 	header {
@@ -6,6 +17,7 @@ pokerin.space {
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://images.evetech.net; connect-src 'self' wss://pokerin.space; form-action 'self'; manifest-src 'self'; worker-src 'self'; upgrade-insecure-requests"
 		-Server
 	}
 
@@ -19,18 +31,33 @@ pokerin.space {
 
 	# API and auth routes -> backend
 	handle /api/* {
-		reverse_proxy app:8080
+		reverse_proxy app:8080 {
+			health_uri /health
+			health_interval 10s
+			health_timeout 3s
+		}
 	}
 	handle /auth/* {
-		reverse_proxy app:8080
+		reverse_proxy app:8080 {
+			health_uri /health
+			health_interval 10s
+			health_timeout 3s
+		}
 	}
 	handle /health {
-		reverse_proxy app:8080
+		reverse_proxy app:8080 {
+			health_uri /health
+			health_interval 10s
+			health_timeout 3s
+		}
 	}
 
 	# WebSocket -> backend
 	handle /ws/* {
 		reverse_proxy app:8080 {
+			health_uri /health
+			health_interval 10s
+			health_timeout 3s
 			flush_interval -1
 			transport http {
 				keepalive 30s
@@ -55,6 +82,12 @@ pokerin.space {
 		output file /data/access.log {
 			roll_size 50MiB
 			roll_keep 3
+		}
+		# Preserve the request path while removing every query value. OAuth
+		# codes/state and legacy WebSocket query tokens must never reach disk.
+		format filter {
+			request>uri regexp `\?.*$` ``
+			request>headers>Referer delete
 		}
 	}
 }

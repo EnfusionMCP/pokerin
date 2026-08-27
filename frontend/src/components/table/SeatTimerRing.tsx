@@ -15,17 +15,17 @@ export function SeatTimerRing({ isActive, startTime, timeout, bankTimeActive }: 
   const [progress, setProgress] = useState(1);
 
   useEffect(() => {
-    if (!isActive || !startTime || !timeout) {
-      setProgress(1);
-      return;
-    }
+    if (!isActive || !startTime || !timeout) return;
     const tick = () => {
       const elapsed = (Date.now() - startTime) / 1000;
       setProgress(Math.max(0, 1 - elapsed / timeout));
     };
-    tick();
+    const frame = requestAnimationFrame(tick);
     const id = setInterval(tick, 100);
-    return () => clearInterval(id);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearInterval(id);
+    };
   }, [isActive, startTime, timeout]);
 
   if (!isActive) return null;

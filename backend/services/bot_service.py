@@ -137,9 +137,9 @@ class BotService:
         for uid, task in bots:
             if table:
                 # Push FOLD to unblock _wait_for_action immediately
-                queue = table._action_queues.get(uid)
-                if queue:
-                    await queue.put(PlayerAction(action=ActionType.FOLD, user_id=uid))
+                await table.enqueue_internal_action(
+                    uid, PlayerAction(action=ActionType.FOLD, user_id=uid)
+                )
                 table._bot_users.discard(uid)
                 table._disconnected_users.add(uid)
             task.cancel()
@@ -228,13 +228,9 @@ class BotService:
                         continue
 
                     action = self._decide(table, seat)
-                    queue = table._action_queues.get(user_id)
-                    if queue is None:
-                        queue = asyncio.Queue()
-                        table._action_queues[user_id] = queue
-                    await queue.put(action)
-                    log.info("[%s] %s %s", name, action.action.value,
-                             f"({action.amount})" if action.amount else "")
+                    if await table.enqueue_internal_action(user_id, action):
+                        log.info("[%s] %s %s", name, action.action.value,
+                                 f"({action.amount})" if action.amount else "")
 
                 # Between hands: check if we need a rebuy
                 if seat.stack <= 0 and table.phase in (HandPhase.IDLE, HandPhase.COMPLETE):
