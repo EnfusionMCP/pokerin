@@ -22,6 +22,10 @@ const defaultOutputDirectory = resolve(frontendRoot, 'src', 'protocol', 'generat
 const SERVER_SCHEMA_ID = 'https://pokerin.space/schema/ws/server-v1';
 const CLIENT_SCHEMA_ID = 'https://pokerin.space/schema/ws/client-v1';
 
+function normalizeLineEndings(value) {
+  return value.replace(/\r\n?/g, '\n');
+}
+
 function parseArguments(argv) {
   const options = {
     check: false,
@@ -165,7 +169,7 @@ function renderValidatorDeclarations() {
 }
 
 async function expectedArtifacts(schemaPath) {
-  const sourceText = await readFile(schemaPath, 'utf8');
+  const sourceText = normalizeLineEndings(await readFile(schemaPath, 'utf8'));
   const bundle = JSON.parse(sourceText);
   if (!bundle || typeof bundle !== 'object'
       || !bundle.server_messages || !bundle.client_messages
@@ -189,7 +193,7 @@ async function main() {
     const stale = [];
     for (const [name, expected] of Object.entries(artifacts)) {
       const actual = await readFile(resolve(options.outputDirectory, name), 'utf8').catch(() => '');
-      if (actual !== expected) stale.push(name);
+      if (normalizeLineEndings(actual) !== expected) stale.push(name);
     }
     if (stale.length > 0) {
       console.error(`Generated protocol artifacts are stale: ${stale.join(', ')}`);
