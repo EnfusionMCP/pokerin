@@ -1,0 +1,16 @@
+[Unit]
+Description=Pokerin verified PostgreSQL backup
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pokerin
+WorkingDirectory=/home/pokerin/app
+ExecStart=/bin/sh /home/pokerin/app/deploy/db-operation.sh backup
+TimeoutStartSec=30min
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

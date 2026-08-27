@@ -102,17 +102,62 @@ async def list_users(
 @router.post("/users/{user_id}/ban")
 async def ban_user(
     user_id: int,
+    request: Request,
     reason: str = "",
     _admin: dict = Depends(get_admin_user),
     session: AsyncSession = Depends(get_db),
 ):
-    user = await session.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    user.is_banned = True
-    user.ban_reason = reason
-    await session.commit()
-    return {"status": "banned", "user_id": user_id}
+    # Import lazily so the admin router remains independent while main.py is
+    # assembling routers. The manager is the singleton shared by TableManager.
+    from ..ws.router import conn_manager
+    from ..ws.protocol import ErrorMessage, PROCESS_STREAM_ID
+
+    closed = 0
+    async with conn_manager.user_guard(user_id):
+        user = await session.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        user.is_banned = True
+        user.ban_reason = reason
+        await session.commit()
+
+        # Mark before yielding to socket closes. connect() checks the deny set
+        # both before and after replacement-close awaits.
+        conn_manager.block_user(user_id)
+        table_manager = getattr(request.app.state, "table_manager", None)
+        for table_id, websocket in conn_manager.user_connections(user_id):
+            table = table_manager.get_table(table_id) if table_manager is not None else None
+            payload = ErrorMessage(
+                code="account_banned",
+                message="Account banned",
+                stream_id=table.stream_id if table is not None else PROCESS_STREAM_ID,
+                revision=table.revision if table is not None else 0,
+            ).model_dump(mode="json", exclude_none=True)
+            try:
+                removed = await conn_manager.terminate_connection(
+                    table_id,
+                    user_id,
+                    websocket,
+                    code=4001,
+                    reason="Account banned",
+                    message=payload,
+                    on_disconnect=(
+                        (lambda table=table: table.handle_disconnect(user_id))
+                        if table is not None
+                        else None
+                    ),
+                )
+                closed += int(removed)
+            except Exception:
+                # The manager still detaches and closes when table cleanup
+                # fails. Avoid reflecting internal exception details.
+                log.error(
+                    "Failed to publish ban disconnect state: user=%d table=%s",
+                    user_id,
+                    table_id,
+                )
+
+    return {"status": "banned", "user_id": user_id, "connections_closed": closed}
 
 
 @router.post("/users/{user_id}/unban")
@@ -121,12 +166,16 @@ async def unban_user(
     _admin: dict = Depends(get_admin_user),
     session: AsyncSession = Depends(get_db),
 ):
-    user = await session.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    user.is_banned = False
-    user.ban_reason = None
-    await session.commit()
+    from ..ws.router import conn_manager
+
+    async with conn_manager.user_guard(user_id):
+        user = await session.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        user.is_banned = False
+        user.ban_reason = None
+        await session.commit()
+        conn_manager.unblock_user(user_id)
     return {"status": "unbanned", "user_id": user_id}
 
 

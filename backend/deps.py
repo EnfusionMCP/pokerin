@@ -1,6 +1,6 @@
 """FastAPI dependency injection — current user, DB session."""
 
-from fastapi import Depends, HTTPException, Query, WebSocket, WebSocketException, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,27 +67,3 @@ async def get_admin_user(
             detail="Not found",
         )
     return user
-
-
-async def get_ws_user(websocket: WebSocket, token: str = Query(...)) -> dict:
-    """Dependency: decode JWT from WebSocket query parameter.
-
-    WebSocket connections can't use Authorization headers in browser JS,
-    so the token is passed as ?token=<jwt> in the connection URL.
-
-    Returns:
-        Dict with user_id, character_id, character_name.
-
-    Raises:
-        WebSocketException if token is invalid.
-    """
-    try:
-        payload = decode_token(token)
-    except Exception:
-        # BUG 17 fix: raise WebSocketException, not HTTPException
-        raise WebSocketException(code=4001, reason="Invalid or expired token")
-    return {
-        "user_id": int(payload["sub"]),
-        "character_id": payload["cid"],
-        "character_name": payload["name"],
-    }

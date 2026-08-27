@@ -1,140 +1,113 @@
-/** WebSocket message types — matches backend ws/protocol.py and poker/table.py */
+/**
+ * Domain-facing aliases over schema-generated WebSocket wire types.
+ * Structural truth lives in protocol/generated/*Protocol.generated.ts.
+ */
 
-import type { ActionType, CardStr, HandPhase, SeatStatus, Street } from './game';
+import {
+  BACKEND_PROTOCOL_SCHEMA_VERSION,
+} from '../protocol/generated/protocolMetadata.generated.ts';
+import type {
+  AckMessage as WireAckMessage,
+  ActionOnMessage as WireActionOnMessage,
+  ActionPromptMessage as WireActionPromptMessage,
+  BankTimeStartMessage as WireBankTimeStartMessage,
+  ChatMessage as WireChatMessage,
+  CommunityMessage as WireCommunityMessage,
+  DealMessage as WireDealMessage,
+  ErrorMessage as WireErrorMessage,
+  HandResultMessage as WireHandResultMessage,
+  HandStartMessage as WireHandStartMessage,
+  PlayerActionMessage as WirePlayerActionMessage,
+  PotData as WirePotData,
+  SeatData as WireSeatData,
+  SeatUpdateMessage as WireSeatUpdateMessage,
+  TableStateMessage as WireTableStateMessage,
+  WinnerData as WireWinnerData,
+} from '../protocol/generated/serverProtocol.generated.ts';
+import type {
+  ActionCommand as WireActionCommand,
+  AddChipsCommand as WireAddChipsCommand,
+  AuthMessage as WireAuthMessage,
+  ChatCommand as WireChatCommand,
+  SitCommand as WireSitCommand,
+  StandCommand as WireStandCommand,
+} from '../protocol/generated/clientProtocol.generated.ts';
+import type { ActionType, CardStr, HandPhase, SeatStatus, Street } from './game.ts';
 
-// --- Shared data shapes ---
+export const PROTOCOL_SCHEMA_VERSION = BACKEND_PROTOCOL_SCHEMA_VERSION;
 
-export interface SeatData {
-  seat: number;
-  user_id: number | null;
-  name?: string;
-  stack?: number;
+type WithType<T, Type extends string> = T & { type: Type };
+type OccupiedSeatStatus = Exclude<SeatStatus, 'empty'>;
+
+export interface ProtocolEnvelope {
+  schema_version?: typeof PROTOCOL_SCHEMA_VERSION;
+  revision?: number;
+  server_time?: string;
+}
+
+export type SeatData = WireSeatData & {
   status: SeatStatus | 'empty';
-  current_bet?: number;
-  portrait?: string;
-}
+  user_id: number | null;
+};
 
-export interface PotData {
-  amount: number;
-  eligible: number[];
-}
+export type PotData = WirePotData;
+export type WinnerInfo = WireWinnerData;
 
-// --- Server → Client messages ---
-
-export interface TableStateMsg {
-  type: 'table_state';
-  table_id: string;
-  table_name: string;
-  seats: SeatData[];
-  community: CardStr[];
-  pots: PotData[];
-  dealer: number;
-  action_on: number;
-  street: Street;
-  phase: HandPhase;
-  your_cards: CardStr[] | null;
-  hand_num: number;
-  seed_hash: string | null;
-  winners?: WinnerInfo[];
-  shown_cards?: Record<string, CardStr[]>;
+export type TableStateMsg = WithType<WireTableStateMessage, 'table_state'> & {
   blinds: { small: number; big: number };
-}
-
-export interface HandStartMsg {
-  type: 'hand_start';
-  hand_num: number;
-  seed_hash: string;
-  dealer: number;
-  pot?: number;
-  seats?: SeatData[];
-}
-
-export interface DealMsg {
-  type: 'deal';
-  cards: CardStr[];
-}
-
-export interface CommunityMsg {
-  type: 'community';
-  street: Street;
-  cards: CardStr[];
-  board: CardStr[];
-}
-
-export interface PlayerActionMsg {
-  type: 'player_action';
-  seat: number;
-  user_id: number;
-  action: ActionType;
-  amount: number;
-  stack: number;
-  current_bet?: number;
-  status?: SeatStatus;
-  pot: number;
-  action_on?: number;
-}
-
-export interface ActionPromptMsg {
-  type: 'action_prompt';
-  valid: ActionType[];
-  call_amount: number;
-  min_raise: number;
-  max_raise: number;
-  timeout: number;
-}
-
-export interface WinnerInfo {
-  seat: number;
-  user_id: number;
-  amount: number;
-  hand: string | null;
-}
-
-export interface HandResultMsg {
-  type: 'hand_result';
   community: CardStr[];
-  winners: WinnerInfo[];
-  shown_cards: Record<string, CardStr[]>;
-  rake: number;
+  phase: HandPhase;
   pots: PotData[];
-  server_seed: string;
-}
+  seats: SeatData[];
+  shown_cards?: Record<string, CardStr[]>;
+  street: Street;
+  winners?: WinnerInfo[];
+  your_cards?: CardStr[] | null;
+};
 
-export interface SeatUpdateMsg {
-  type: 'seat_update';
-  seat: number;
-  user_id: number | null;
-  name?: string;
-  stack?: number;
+export type HandStartMsg = WithType<WireHandStartMessage, 'hand_start'> & {
+  seats?: SeatData[] | null;
+};
+
+export type DealMsg = WithType<WireDealMessage, 'deal'> & { cards: CardStr[] };
+
+export type CommunityMsg = WithType<WireCommunityMessage, 'community'> & {
+  board: CardStr[];
+  cards: CardStr[];
+  street: Street;
+};
+
+export type PlayerActionMsg = WithType<WirePlayerActionMessage, 'player_action'> & {
+  action: ActionType;
+  status?: OccupiedSeatStatus | null;
+};
+
+export type ActionPromptMsg = WithType<WireActionPromptMessage, 'action_prompt'> & {
+  valid: ActionType[];
+};
+
+export type ActionOnMsg = WithType<WireActionOnMessage, 'action_on'>;
+export type BankTimeStartMsg = WithType<WireBankTimeStartMessage, 'bank_time_start'>;
+
+export type HandResultMsg = WithType<WireHandResultMessage, 'hand_result'> & {
+  community: CardStr[];
+  pots: PotData[];
+  shown_cards: Record<string, CardStr[]>;
+  winners: WinnerInfo[];
+};
+
+export type SeatUpdateMsg = WithType<WireSeatUpdateMessage, 'seat_update'> & {
   status: SeatStatus | 'empty';
-  current_bet?: number;
-  portrait?: string;
-}
+  user_id: number | null;
+};
 
-export interface ChatMsg {
-  type: 'chat';
-  user_id: number;
-  name: string;
-  text: string;
-}
+export type ChatMsg = WithType<WireChatMessage, 'chat'>;
 
-export interface ActionOnMsg {
-  type: 'action_on';
-  seat: number;
-  timeout: number;
-}
+export type AckMsg = WithType<WireAckMessage, 'ack'> & {
+  command_type: ClientMessage['type'];
+};
 
-export interface BankTimeStartMsg {
-  type: 'bank_time_start';
-  seat: number;
-  user_id: number;
-  duration: number;
-}
-
-export interface ErrorMsg {
-  type: 'error';
-  message: string;
-}
+export type ErrorMsg = WithType<WireErrorMessage, 'error'>;
 
 export type ServerMessage =
   | TableStateMsg
@@ -148,14 +121,22 @@ export type ServerMessage =
   | HandResultMsg
   | SeatUpdateMsg
   | ChatMsg
+  | AckMsg
   | ErrorMsg;
 
-// --- Client → Server messages ---
+export interface CommandMetadata {
+  schema_version?: typeof PROTOCOL_SCHEMA_VERSION | null;
+  command_id?: string | null;
+}
 
-export interface SitCmd { type: 'sit'; seat: number; buyin: number }
-export interface StandCmd { type: 'stand' }
-export interface ActionCmd { type: 'action'; action: ActionType; amount?: number }
-export interface AddChipsCmd { type: 'add_chips'; amount: number }
-export interface ChatCmd { type: 'chat'; text: string }
+export type SitCmd = WithType<WireSitCommand, 'sit'>;
+export type StandCmd = WithType<WireStandCommand, 'stand'>;
+export type ActionCmd = WithType<WireActionCommand, 'action'>;
+export type AddChipsCmd = WithType<WireAddChipsCommand, 'add_chips'>;
+export type ChatCmd = WithType<WireChatCommand, 'chat'>;
 
 export type ClientMessage = SitCmd | StandCmd | ActionCmd | AddChipsCmd | ChatCmd;
+
+export type AuthMessage = WithType<WireAuthMessage, 'auth'> & {
+  schema_version: typeof PROTOCOL_SCHEMA_VERSION;
+};

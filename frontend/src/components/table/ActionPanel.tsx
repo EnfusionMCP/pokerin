@@ -1,8 +1,9 @@
 /** Action panel — bottom-right, Stake-style buttons */
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useTableStore } from '../../stores/tableStore';
 import { formatIskCompact } from '../../lib/isk';
+import type { ActionPromptMsg, ClientMessage, PotData } from '../../types/ws';
 
 export function ActionPanel() {
   const prompt = useTableStore((s) => s.prompt);
@@ -10,13 +11,30 @@ export function ActionPanel() {
   const blinds = useTableStore((s) => s.blinds);
   const pots = useTableStore((s) => s.pots);
 
-  const [raiseAmount, setRaiseAmount] = useState(0);
-
-  useEffect(() => {
-    if (prompt) setRaiseAmount(prompt.min_raise);
-  }, [prompt]);
-
   if (!prompt || !send) return null;
+
+  const promptKey = prompt.prompt_id
+    ?? `${prompt.revision ?? 'legacy'}:${prompt.call_amount}:${prompt.min_raise}:${prompt.max_raise}`;
+  return (
+    <PromptActions
+      key={promptKey}
+      prompt={prompt}
+      send={send}
+      blinds={blinds}
+      pots={pots}
+    />
+  );
+}
+
+interface PromptActionsProps {
+  prompt: ActionPromptMsg;
+  send: (message: ClientMessage) => string | null;
+  blinds: { small: number; big: number };
+  pots: PotData[];
+}
+
+function PromptActions({ prompt, send, blinds, pots }: PromptActionsProps) {
+  const [raiseAmount, setRaiseAmount] = useState(prompt.min_raise);
 
   const { valid, call_amount, min_raise, max_raise } = prompt;
   const potTotal = pots.reduce((sum, p) => sum + p.amount, 0);
@@ -28,8 +46,9 @@ export function ActionPanel() {
   const canBetOrRaise = canBet || canRaise;
 
   const act = (msg: Parameters<typeof send>[0]) => {
-    useTableStore.setState({ prompt: null, promptTimerStart: null });
-    send(msg);
+    if (send(msg)) {
+      useTableStore.setState({ prompt: null, promptTimerStart: null });
+    }
   };
 
   const handleFold = () => act({ type: 'action', action: 'fold' });

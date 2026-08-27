@@ -1,13 +1,36 @@
+name: pokerin
+
+x-postgres-image: &postgres-image postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+x-db-ops-environment: &db-ops-environment
+  PGHOST: postgres
+  PGPORT: "5432"
+  PGUSER: pokerin
+  PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  PGCONNECT_TIMEOUT: "10"
+  DB_EXPECTED_HOST: postgres
+  DB_EXPECTED_USER: pokerin
+  DB_EXPECTED_SYSTEM_IDENTIFIER: ${DB_EXPECTED_SYSTEM_IDENTIFIER:?Set the PostgreSQL system identifier in .env}
+  BACKUP_ROOT: /backups
+  BACKUP_EXPECTED_ROOT: /backups
+  BACKUP_DESTINATION_ID: ${BACKUP_DESTINATION_ID:?Set a stable BACKUP_DESTINATION_ID in .env}
+
+x-db-ops-volumes: &db-ops-volumes
+  - type: bind
+    source: ${BACKUP_DIR:?Set BACKUP_DIR to an absolute, durable host path}
+    target: /backups
+  - type: bind
+    source: ./deploy/db-ops.sh
+    target: /opt/pokerin/db-ops.sh
+    read_only: true
+
 services:
   app:
     build: .
     restart: unless-stopped
     env_file: .env
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 10s
@@ -23,7 +46,7 @@ services:
       - internal
 
   postgres:
-    image: postgres:16-alpine
+    image: *postgres-image
     restart: unless-stopped
     logging:
       driver: json-file
@@ -33,38 +56,84 @@ services:
     environment:
       POSTGRES_USER: pokerin
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: pokerin
+      POSTGRES_DB: ${POSTGRES_DB:-pokerin}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pokerin"]
+      test: ["CMD-SHELL", "pg_isready -U pokerin -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 5
     networks:
       - internal
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+  db-backup:
+    image: *postgres-image
+    restart: "no"
+    user: "${BACKUP_CONTAINER_UID:-70}:${BACKUP_CONTAINER_GID:-70}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *db-ops-environment
+      PGDATABASE: ${POSTGRES_DB:-pokerin}
+      DB_EXPECTED_DATABASE: ${POSTGRES_DB:-pokerin}
+      BACKUP_COMPRESSION_LEVEL: ${BACKUP_COMPRESSION_LEVEL:-6}
+      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-30}
+      BACKUP_REQUIRE_QUIESCED: ${BACKUP_REQUIRE_QUIESCED:-0}
+    volumes: *db-ops-volumes
+    entrypoint: ["/bin/sh", "/opt/pokerin/db-ops.sh"]
+    command: ["backup"]
+    networks:
+      - internal
+
+  migrate:
+    build: .
+    restart: "no"
+    env_file: .env
+    environment:
+      EXPECTED_DATABASE_HOST: postgres
+      EXPECTED_DATABASE_PORT: "5432"
+      EXPECTED_DATABASE_USER: pokerin
+      EXPECTED_DATABASE_NAME: ${POSTGRES_DB:-pokerin}
+    depends_on:
+      db-backup:
+        condition: service_completed_successfully
+    command: ["/bin/sh", "deploy/migrate.sh"]
+    networks:
+      - internal
+
+  db-restore:
+    image: *postgres-image
+    profiles: ["ops"]
+    restart: "no"
+    user: "${BACKUP_CONTAINER_UID:-70}:${BACKUP_CONTAINER_GID:-70}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *db-ops-environment
+      PGMAINTENANCE_DB: postgres
+      PRODUCTION_DATABASE_NAME: ${POSTGRES_DB:-pokerin}
+      RESTORE_EXPECTED_SOURCE_DATABASE: ${RESTORE_EXPECTED_SOURCE_DATABASE:-${POSTGRES_DB:-pokerin}}
+      RESTORE_APPROVED_DATABASE: ${RESTORE_APPROVED_DATABASE:-}
+      RESTORE_BACKUP_ID: ${RESTORE_BACKUP_ID:-}
+      RESTORE_TARGET_DATABASE: ${RESTORE_TARGET_DATABASE:-}
+      RESTORE_MODE: ${RESTORE_MODE:-disposable}
+      RESTORE_CONFIRM: ${RESTORE_CONFIRM:-}
+      DROP_TARGET_DATABASE: ${DROP_TARGET_DATABASE:-}
+      DROP_CONFIRM: ${DROP_CONFIRM:-}
+    volumes: *db-ops-volumes
+    entrypoint: ["/bin/sh", "/opt/pokerin/db-ops.sh"]
+    command: ["verify"]
     networks:
       - internal
 
   caddy:
-    image: caddy:2-alpine
+    image: pokerin-web:${POKERIN_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
     restart: unless-stopped
     logging:
       driver: json-file
@@ -76,8 +145,6 @@ services:
       - "443:443"
       - "443:443/udp"  # HTTP/3
     volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./frontend_dist:/srv/frontend:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -88,7 +155,8 @@ services:
 
 volumes:
   pgdata:
-  redisdata:
+    external: true
+    name: ${POSTGRES_VOLUME_NAME:?Set POSTGRES_VOLUME_NAME to the existing or provisioned database volume}
   caddy_data:
   caddy_config:
 

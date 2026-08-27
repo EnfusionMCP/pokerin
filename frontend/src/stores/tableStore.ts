@@ -1,11 +1,21 @@
-/** Table game state — populated by WebSocket messages */
+/** Table game state populated only by validated protocol messages. */
 
 import { create } from 'zustand';
+import {
+  decideRevision,
+  type ConnectionState,
+  type TerminalConnectionReason,
+} from '../protocol/connection.ts';
 import type {
-  SeatData, PotData, ActionPromptMsg, WinnerInfo,
-  ServerMessage, ClientMessage,
-} from '../types/ws';
-import type { ActionType, CardStr, HandPhase, Street } from '../types/game';
+  AckMsg,
+  ActionPromptMsg,
+  ClientMessage,
+  PotData,
+  SeatData,
+  ServerMessage,
+  WinnerInfo,
+} from '../types/ws.ts';
+import type { ActionType, CardStr, HandPhase, Street } from '../types/game.ts';
 
 interface LastAction {
   action: ActionType;
@@ -21,10 +31,41 @@ interface ChatMessage {
   timestamp: number;
 }
 
+export interface QueuedCommand {
+  commandId: string;
+  commandType: ClientMessage['type'];
+  sentAt: number;
+}
+
+export interface PendingCommand extends QueuedCommand {
+  transportStatus: 'queued' | 'received';
+  receivedAt: number | null;
+}
+
+export type SendCommand = (message: ClientMessage) => string | null;
+
+export type MessageHandlingResult = 'applied' | 'stale' | 'awaiting_snapshot';
+
+interface ConnectionDetails {
+  terminalReason?: TerminalConnectionReason | null;
+  message?: string | null;
+}
+
+interface ProtocolErrorLike {
+  code: string;
+  message: string;
+}
+
 interface TableState {
-  // Connection
+  // Connection and synchronization
   tableId: string | null;
   connected: boolean;
+  connectionState: ConnectionState;
+  terminalReason: TerminalConnectionReason | null;
+  connectionMessage: string | null;
+  streamId: string | null;
+  revision: number;
+  snapshotRevision: number | null;
 
   // Table info
   tableName: string;
@@ -43,68 +84,88 @@ interface TableState {
 
   // Action prompt
   prompt: ActionPromptMsg | null;
+  /** Kept through optimistic prompt hiding so send() can still echo its token. */
+  activePrompt: ActionPromptMsg | null;
   promptTimerStart: number | null;
   actionTimeout: number;
-  bankTimeSeat: number | null;  // seat currently on its one-shot bank time
+  bankTimeSeat: number | null;
 
   // Showdown
   shownCards: Record<string, CardStr[]>;
   winners: WinnerInfo[];
 
-  // Per-seat last action (for badges)
   lastActions: Record<number, LastAction>;
-
-  // Chat
   chatMessages: ChatMessage[];
 
-  // My seat (-1 if standing)
   mySeat: number;
   myUserId: number | null;
 
-  // Errors
+  // Protocol and command outcomes
   lastError: string | null;
+  lastErrorCode: string | null;
+  pendingCommands: Record<string, PendingCommand>;
+  lastAck: AckMsg | null;
 
-  // Deal animation trigger
   dealKey: number;
-
-  // Stack snapshot at hand start for profit calculation
   handStartStacks: Record<number, number>;
-
-  // Pre-action selection (before your turn)
   preAction: 'check_fold' | 'check' | 'call_any' | 'fold' | null;
-
-  // Persistent toggles
   sitOutNext: boolean;
   foldToAnyBet: boolean;
-
-  // Bet collection animation state
   collectingBets: boolean;
 
-  // Send function (set by useWebSocket)
-  send: ((msg: ClientMessage) => void) | null;
-  setSend: (fn: (msg: ClientMessage) => void) => void;
+  send: SendCommand | null;
+  setSend: (fn: SendCommand | null) => void;
+  recordCommand: (command: QueuedCommand) => void;
+  recordProtocolError: (error: ProtocolErrorLike) => void;
+  clearError: () => void;
 
-  // Message handler
-  handleMessage: (msg: ServerMessage) => void;
+  handleMessage: (msg: ServerMessage) => MessageHandlingResult;
+  setConnectionState: (
+    tableId: string,
+    connectionState: ConnectionState,
+    details?: ConnectionDetails,
+  ) => void;
+  /** Compatibility shim for callers that only know connected/disconnected. */
   setConnection: (tableId: string, connected: boolean) => void;
   setMyUserId: (userId: number) => void;
   reset: () => void;
 }
 
 function findMySeat(seats: SeatData[], userId: number | null): number {
-  if (!userId) return -1;
-  for (let i = 0; i < seats.length; i++) {
-    if (seats[i].user_id === userId) return i;
-  }
-  return -1;
+  if (userId === null) return -1;
+  return seats.findIndex((seat) => seat.user_id === userId);
 }
 
-// Module-level timeout for bet collection animation (not in zustand — not serializable)
-let _collectTimeout: ReturnType<typeof setTimeout> | null = null;
+function commandWithPrompt(
+  action: ActionType,
+  prompt: ActionPromptMsg,
+): ClientMessage {
+  return {
+    type: 'action',
+    action,
+    ...(prompt.prompt_id ? { prompt_id: prompt.prompt_id } : {}),
+    ...(prompt.turn_token ? { turn_token: prompt.turn_token } : {}),
+  };
+}
+
+let collectTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function clearTransientTimers(): void {
+  if (collectTimeout) {
+    clearTimeout(collectTimeout);
+    collectTimeout = null;
+  }
+}
 
 const INITIAL_STATE = {
   tableId: null as string | null,
   connected: false,
+  connectionState: 'idle' as ConnectionState,
+  terminalReason: null as TerminalConnectionReason | null,
+  connectionMessage: null as string | null,
+  streamId: null as string | null,
+  revision: -1,
+  snapshotRevision: null as number | null,
   tableName: '',
   seats: [] as SeatData[],
   community: [] as CardStr[],
@@ -119,6 +180,7 @@ const INITIAL_STATE = {
   serverSeed: null as string | null,
   blinds: { small: 0, big: 0 },
   prompt: null as ActionPromptMsg | null,
+  activePrompt: null as ActionPromptMsg | null,
   promptTimerStart: null as number | null,
   actionTimeout: 30,
   bankTimeSeat: null as number | null,
@@ -129,7 +191,10 @@ const INITIAL_STATE = {
   mySeat: -1,
   myUserId: null as number | null,
   lastError: null as string | null,
-  send: null as ((msg: ClientMessage) => void) | null,
+  lastErrorCode: null as string | null,
+  pendingCommands: {} as Record<string, PendingCommand>,
+  lastAck: null as AckMsg | null,
+  send: null as SendCommand | null,
   dealKey: 0,
   handStartStacks: {} as Record<number, number>,
   preAction: null as 'check_fold' | 'check' | 'call_any' | 'fold' | null,
@@ -142,17 +207,91 @@ export const useTableStore = create<TableState>((set, get) => ({
   ...INITIAL_STATE,
 
   setSend: (fn) => set({ send: fn }),
-  setConnection: (tableId, connected) => set({ tableId, connected }),
-  setMyUserId: (userId) => set({ myUserId: userId }),
 
-  reset: () => set({ ...INITIAL_STATE }),
+  recordCommand: (command) => set((state) => {
+    const recent = Object.fromEntries(
+      Object.entries(state.pendingCommands)
+        .filter(([, pending]) => Date.now() - pending.sentAt < 60_000)
+        .slice(-49),
+    );
+    return {
+      pendingCommands: {
+        ...recent,
+        [command.commandId]: {
+          ...command,
+          transportStatus: 'queued',
+          receivedAt: null,
+        },
+      },
+    };
+  }),
 
-  handleMessage: (msg: ServerMessage) => {
+  recordProtocolError: (error) => set({
+    lastError: error.message,
+    lastErrorCode: error.code,
+  }),
+
+  clearError: () => set({ lastError: null, lastErrorCode: null }),
+
+  setConnectionState: (tableId, connectionState, details = {}) => set((state) => ({
+    tableId,
+    connectionState,
+    connected: connectionState === 'connected',
+    terminalReason: details.terminalReason
+      ?? (connectionState === 'terminal' ? state.terminalReason : null),
+    connectionMessage: details.message
+      ?? (connectionState === 'connected' ? null : state.connectionMessage),
+    // A new transport epoch may legitimately deliver the same authoritative
+    // snapshot revision again. Clear only the per-connection duplicate marker.
+    ...((connectionState === 'connecting' || connectionState === 'reconnecting')
+      ? { snapshotRevision: null }
+      : {}),
+  })),
+
+  setConnection: (tableId, connected) => get().setConnectionState(
+    tableId,
+    connected ? 'connected' : 'reconnecting',
+  ),
+
+  setMyUserId: (userId) => set((state) => ({
+    myUserId: userId,
+    mySeat: findMySeat(state.seats, userId),
+  })),
+
+  reset: () => {
+    clearTransientTimers();
+    set({ ...INITIAL_STATE });
+  },
+
+  handleMessage: (msg) => {
     const state = get();
+    const decision = decideRevision(
+      {
+        streamId: state.streamId,
+        revision: state.revision,
+        snapshotRevision: state.snapshotRevision,
+      },
+      msg,
+    );
+    if (!decision.apply) {
+      return decision.reason;
+    }
+
+    const revisionPatch = {
+      streamId: decision.streamId,
+      revision: decision.revision,
+      snapshotRevision: decision.snapshotRevision,
+    };
 
     switch (msg.type) {
       case 'table_state':
+        clearTransientTimers();
         set({
+          ...revisionPatch,
+          connected: true,
+          connectionState: 'connected',
+          terminalReason: null,
+          connectionMessage: null,
           tableName: msg.table_name,
           seats: msg.seats,
           community: msg.community,
@@ -164,36 +303,48 @@ export const useTableStore = create<TableState>((set, get) => ({
           myCards: msg.your_cards,
           handNum: msg.hand_num,
           seedHash: msg.seed_hash,
+          serverSeed: null,
           blinds: msg.blinds,
           mySeat: findMySeat(msg.seats, state.myUserId),
-          // If we connected during the showdown pause, the snapshot carries the
-          // result so we still see who won; otherwise these are empty.
           shownCards: msg.shown_cards ?? {},
           winners: msg.winners ?? [],
           lastActions: {},
+          ...(decision.streamChanged ? {
+            chatMessages: [],
+            pendingCommands: {},
+            lastAck: null,
+            lastError: null,
+            lastErrorCode: null,
+            handStartStacks: {},
+          } : {}),
           prompt: null,
+          activePrompt: null,
           promptTimerStart: null,
           bankTimeSeat: null,
+          collectingBets: false,
         });
         break;
 
       case 'hand_start': {
-        // Use fresh seat data from server if provided, otherwise keep current
+        clearTransientTimers();
         const freshSeats = msg.seats ?? state.seats;
-        // Snapshot stacks for profit calculation
         const stacks: Record<number, number> = {};
-        for (let i = 0; i < freshSeats.length; i++) {
-          if (freshSeats[i].user_id !== null) {
-            stacks[i] = freshSeats[i].stack ?? 0;
+        for (let index = 0; index < freshSeats.length; index += 1) {
+          if (freshSeats[index].user_id !== null) {
+            stacks[index] = freshSeats[index].stack ?? 0;
           }
         }
         set({
+          ...revisionPatch,
           seats: freshSeats,
           mySeat: findMySeat(freshSeats, state.myUserId),
           handNum: msg.hand_num,
           seedHash: msg.seed_hash,
           serverSeed: null,
           dealer: msg.dealer,
+          phase: 'dealing',
+          street: 'preflop',
+          actionOn: -1,
           community: [],
           pots: msg.pot ? [{ amount: msg.pot, eligible: [] }] : [],
           myCards: null,
@@ -201,44 +352,53 @@ export const useTableStore = create<TableState>((set, get) => ({
           winners: [],
           lastActions: {},
           prompt: null,
+          activePrompt: null,
           promptTimerStart: null,
           bankTimeSeat: null,
+          collectingBets: false,
           dealKey: state.dealKey + 1,
           handStartStacks: stacks,
           preAction: state.sitOutNext ? 'fold' : state.foldToAnyBet ? 'check_fold' : null,
           chatMessages: [
             ...state.chatMessages.slice(-99),
-            { userId: 0, name: 'Dealer', text: `Hand #${msg.hand_num} started`, system: true, timestamp: Date.now() },
+            {
+              userId: 0,
+              name: 'Dealer',
+              text: `Hand #${msg.hand_num} started`,
+              system: true,
+              timestamp: Date.now(),
+            },
           ],
         });
         break;
       }
 
       case 'deal':
-        set({ myCards: msg.cards });
+        set({ ...revisionPatch, myCards: msg.cards, phase: 'dealing' });
         break;
 
-      case 'community': {
-        // Show community cards IMMEDIATELY — never delay card display.
-        // Only the bet-clearing animation is deferred.
-        const boardSnapshot = msg.board;
-        const clearedSeats = state.seats.map(s => ({ ...s, current_bet: 0 }));
-        if (_collectTimeout) clearTimeout(_collectTimeout);
+      case 'community':
+        if (collectTimeout) clearTimeout(collectTimeout);
         set({
+          ...revisionPatch,
           collectingBets: true,
-          community: boardSnapshot,
+          community: msg.board,
           street: msg.street,
+          phase: 'dealing',
           lastActions: {},
+          prompt: null,
+          activePrompt: null,
+          promptTimerStart: null,
+          bankTimeSeat: null,
         });
-        _collectTimeout = setTimeout(() => {
-          _collectTimeout = null;
-          set({
-            seats: clearedSeats,
+        collectTimeout = setTimeout(() => {
+          collectTimeout = null;
+          set((current) => ({
+            seats: current.seats.map((seat) => ({ ...seat, current_bet: 0 })),
             collectingBets: false,
-          });
+          }));
         }, 400);
         break;
-      }
 
       case 'player_action': {
         const newSeats = [...state.seats];
@@ -252,33 +412,31 @@ export const useTableStore = create<TableState>((set, get) => ({
             status: msg.status ?? seat.status,
           };
         }
-        // System chat for all actions
-        const amtStr = msg.amount > 0 ? ` ${(msg.amount / 100).toLocaleString()} ISK` : '';
-        const sysMsg = msg.action === 'fold' ? `${playerName} folds`
+        const amount = msg.amount > 0 ? ` ${(msg.amount / 100).toLocaleString()} ISK` : '';
+        const systemText = msg.action === 'fold' ? `${playerName} folds`
           : msg.action === 'check' ? `${playerName} checks`
-          : msg.action === 'call' ? `${playerName} calls${amtStr}`
-          : msg.action === 'bet' ? `${playerName} bets${amtStr}`
-          : msg.action === 'raise' ? `${playerName} raises to${amtStr}`
-          : msg.action === 'allin' ? `${playerName} goes all-in${amtStr}`
+          : msg.action === 'call' ? `${playerName} calls${amount}`
+          : msg.action === 'bet' ? `${playerName} bets${amount}`
+          : msg.action === 'raise' ? `${playerName} raises to${amount}`
+          : msg.action === 'allin' ? `${playerName} goes all-in${amount}`
           : null;
         set({
+          ...revisionPatch,
+          phase: 'betting',
           seats: newSeats,
-          // Update pot from server
-          pots: msg.pot != null ? [{ amount: msg.pot, eligible: [] }] : state.pots,
-          // Update whose turn it is
+          pots: [{ amount: msg.pot, eligible: [] }],
           actionOn: msg.action_on ?? state.actionOn,
+          prompt: null,
+          activePrompt: null,
+          promptTimerStart: null,
           lastActions: {
             ...state.lastActions,
-            [msg.seat]: {
-              action: msg.action,
-              amount: msg.amount,
-              timestamp: Date.now(),
-            },
+            [msg.seat]: { action: msg.action, amount: msg.amount, timestamp: Date.now() },
           },
-          ...(sysMsg ? {
+          ...(systemText ? {
             chatMessages: [
               ...state.chatMessages.slice(-99),
-              { userId: 0, name: 'Dealer', text: sysMsg, system: true, timestamp: Date.now() },
+              { userId: 0, name: 'Dealer', text: systemText, system: true, timestamp: Date.now() },
             ],
           } : {}),
         });
@@ -286,72 +444,71 @@ export const useTableStore = create<TableState>((set, get) => ({
       }
 
       case 'action_prompt': {
-        const pa = state.preAction;
-        const sendFn = state.send;
-
-        // Auto-fire pre-action ONLY for zero-cost actions (check, fold)
-        // Never auto-call — the bet size may have changed since pre-action was set
-        if (pa && sendFn) {
-          const validActions = msg.valid as string[];
-          let fired = false;
-
-          if (pa === 'fold') {
-            // Sit out — always fold
-            sendFn({ type: 'action', action: 'fold' });
-            fired = true;
-          } else if (pa === 'check_fold') {
-            if (validActions.includes('check')) {
-              sendFn({ type: 'action', action: 'check' });
-              fired = true;
-            }
-            // Don't auto-fold — show the prompt so player can reconsider
-          } else if (pa === 'check') {
-            if (validActions.includes('check')) {
-              sendFn({ type: 'action', action: 'check' });
-              fired = true;
-            }
-          } else if (pa === 'call_any') {
-            if (validActions.includes('check')) {
-              sendFn({ type: 'action', action: 'check' });
-              fired = true;
-            }
-            // Don't auto-call — show prompt so player sees the amount first
+        const preAction = state.preAction;
+        const send = state.send;
+        if (preAction && send) {
+          let action: ActionType | null = null;
+          if (preAction === 'fold') action = 'fold';
+          if ((preAction === 'check_fold' || preAction === 'check' || preAction === 'call_any')
+              && msg.valid.includes('check')) {
+            action = 'check';
           }
-
-          if (fired) {
-            set({ preAction: null });
-            break;
+          if (action) {
+            const enqueued = send(commandWithPrompt(action, msg));
+            if (enqueued) {
+              set({
+                ...revisionPatch,
+                preAction: null,
+                phase: 'betting',
+                activePrompt: msg,
+              });
+              break;
+            }
           }
         }
-
         set({
+          ...revisionPatch,
+          phase: 'betting',
           prompt: msg,
+          activePrompt: msg,
           promptTimerStart: Date.now(),
+          actionTimeout: msg.timeout,
           bankTimeSeat: null,
-          preAction: null, // clear pre-action when prompt shows
+          preAction: null,
         });
         break;
       }
 
       case 'hand_result': {
-        const winMsgs = (msg.winners ?? []).map((w) => {
-          const wName = state.seats[w.seat]?.name ?? `Seat ${w.seat}`;
-          const handStr = w.hand ? ` with ${w.hand}` : '';
-          return { userId: 0, name: 'Dealer', text: `${wName} wins${handStr}`, system: true as const, timestamp: Date.now() };
+        clearTransientTimers();
+        const winMessages = msg.winners.map((winner) => {
+          const winnerName = state.seats[winner.seat]?.name ?? `Seat ${winner.seat}`;
+          const hand = winner.hand ? ` with ${winner.hand}` : '';
+          return {
+            userId: 0,
+            name: 'Dealer',
+            text: `${winnerName} wins${hand}`,
+            system: true as const,
+            timestamp: Date.now(),
+          };
         });
         set({
+          ...revisionPatch,
+          phase: 'showdown',
           community: msg.community,
           winners: msg.winners,
           shownCards: msg.shown_cards,
           serverSeed: msg.server_seed,
-          pots: msg.pots ?? state.pots,
+          pots: msg.pots,
           prompt: null,
+          activePrompt: null,
           promptTimerStart: null,
           bankTimeSeat: null,
           actionOn: -1,
+          collectingBets: false,
           chatMessages: [
-            ...state.chatMessages.slice(-(100 - winMsgs.length)),
-            ...winMsgs,
+            ...state.chatMessages.slice(-(100 - winMessages.length)),
+            ...winMessages,
           ],
         });
         break;
@@ -359,10 +516,9 @@ export const useTableStore = create<TableState>((set, get) => ({
 
       case 'seat_update': {
         const newSeats = [...state.seats];
-        if (msg.seat >= 0 && msg.seat < newSeats.length) {
-          newSeats[msg.seat] = msg;
-        }
+        if (msg.seat >= 0 && msg.seat < newSeats.length) newSeats[msg.seat] = msg;
         set({
+          ...revisionPatch,
           seats: newSeats,
           mySeat: findMySeat(newSeats, state.myUserId),
         });
@@ -371,6 +527,7 @@ export const useTableStore = create<TableState>((set, get) => ({
 
       case 'chat':
         set({
+          ...revisionPatch,
           chatMessages: [
             ...state.chatMessages.slice(-99),
             { userId: msg.user_id, name: msg.name, text: msg.text, timestamp: Date.now() },
@@ -380,37 +537,67 @@ export const useTableStore = create<TableState>((set, get) => ({
 
       case 'action_on':
         set({
+          ...revisionPatch,
+          phase: 'betting',
           actionOn: msg.seat,
+          prompt: null,
+          activePrompt: null,
           promptTimerStart: Date.now(),
-          actionTimeout: msg.timeout ?? 30,
-          bankTimeSeat: null,  // fresh turn → base timer
+          actionTimeout: msg.timeout,
+          bankTimeSeat: null,
         });
         break;
 
       case 'bank_time_start':
-        // The base timer expired; restart the ring (amber) for the bank window.
         set({
+          ...revisionPatch,
           actionOn: msg.seat,
           promptTimerStart: Date.now(),
-          actionTimeout: msg.duration ?? 15,
+          actionTimeout: msg.duration,
           bankTimeSeat: msg.seat,
         });
         break;
 
-      case 'error':
-        set({ lastError: msg.message });
-        // Auto-clear after 5 seconds
-        setTimeout(() => {
-          if (get().lastError === msg.message) {
-            set({ lastError: null });
-          }
-        }, 5000);
+      case 'ack': {
+        const pending = state.pendingCommands[msg.command_id];
+        const pendingCommands = pending
+          ? {
+              ...state.pendingCommands,
+              [msg.command_id]: {
+                ...pending,
+                transportStatus: 'received' as const,
+                receivedAt: Date.now(),
+              },
+            }
+          : state.pendingCommands;
+        set({ ...revisionPatch, pendingCommands, lastAck: msg });
         break;
+      }
 
-      default:
-        // Unknown message type — log for debugging
-        console.warn('[WS] Unknown message type:', (msg as { type?: string }).type);
+      case 'error': {
+        const pendingCommands = { ...state.pendingCommands };
+        const pendingCommand = msg.command_id ? pendingCommands[msg.command_id] : undefined;
+        const failedCommandType = pendingCommand?.commandType
+          ?? (msg.command_id && state.lastAck?.command_id === msg.command_id
+            ? state.lastAck.command_type
+            : undefined);
+        if (msg.command_id) delete pendingCommands[msg.command_id];
+        const stalePrompt = msg.code === 'stale_prompt' || msg.code === 'prompt_token_mismatch';
+        const restorePrompt = failedCommandType === 'action' && !stalePrompt
+          ? state.activePrompt
+          : null;
+        set({
+          ...revisionPatch,
+          pendingCommands,
+          lastError: msg.message,
+          lastErrorCode: msg.code ?? 'LEGACY_SERVER_ERROR',
+          ...(restorePrompt ? { prompt: restorePrompt } : {}),
+          ...(stalePrompt ? { prompt: null, activePrompt: null } : {}),
+        });
         break;
+      }
     }
+
+    return 'applied';
   },
 }));

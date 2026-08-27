@@ -12,12 +12,22 @@ Asserts:
   * buy-in and rake transactions are recorded
   * no negative balances or stacks
 
-Run (inside container):  alembic upgrade head && python tests/integration_live.py
+Run only against a disposable database. See tests/README.md.
 """
 
 import asyncio
 import random
 import sys
+
+from tests.db_safety import (
+    configure_disposable_test_database,
+    verify_configured_test_engine,
+    verify_connected_database,
+)
+
+# This must run before importing backend.config/backend.db. It raises before a
+# connection is possible unless every destructive-test safeguard is satisfied.
+_TEST_DATABASE_URL = configure_disposable_test_database()
 
 import backend.poker.table as table_mod
 from backend.poker.table import PokerTable, TableConfig, SeatStatus
@@ -29,7 +39,12 @@ from backend.models.ledger import Transaction
 from sqlalchemy import select, func, delete
 from decimal import Decimal
 
-from engine_sim import FakeConn  # reuse the auto-responding fuzzer connection
+from tests.engine_sim import FakeConn  # reuse the auto-responding fuzzer connection
+
+# pytest may already have imported backend.db while collecting another test.
+# Verify its cached engine still points at the explicitly approved URL before
+# this module can make even a read-only connection.
+verify_configured_test_engine(engine, _TEST_DATABASE_URL)
 
 
 async def _noop_sleep(*_a, **_k):
@@ -38,6 +53,7 @@ async def _noop_sleep(*_a, **_k):
 
 async def reset_db():
     async with async_session() as s:
+        await verify_connected_database(s, _TEST_DATABASE_URL)
         await s.execute(delete(HandAction))
         await s.execute(delete(HandPlayer))
         await s.execute(delete(Hand))

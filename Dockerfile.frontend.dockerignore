@@ -1,0 +1,14 @@
+**
+!Dockerfile.frontend
+!frontend/
+!frontend/**
+frontend/node_modules
+frontend/dist
+frontend/.vite
+!backend/
+!backend/ws/
+!backend/ws/protocol.schema.json
+!deploy/
+!deploy/Caddyfile
+!deploy/caddy-build/
+!deploy/caddy-build/**

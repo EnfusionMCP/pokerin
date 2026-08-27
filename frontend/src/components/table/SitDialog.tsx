@@ -18,7 +18,9 @@ export function SitDialog({ seatIndex, minBuyin, maxBuyin, bigBlind, onClose }: 
   }, [isAuth]);
 
   const insufficientBalance = balance !== null && buyin > balance;
-  const handleSit = () => { if (!send) return; send({ type: 'sit', seat: seatIndex, buyin }); onClose(); };
+  const handleSit = () => {
+    if (send?.({ type: 'sit', seat: seatIndex, buyin })) onClose();
+  };
   const bbCount = bigBlind > 0 ? Math.round(buyin / bigBlind) : 0;
 
   return (

@@ -4,6 +4,7 @@ __pycache__/
 .env
 .env.production
 .venv/
+venv/
 *.egg-info/
 dist/
 build/
@@ -13,4 +14,9 @@ bot_tokens.json
 
 # local dev artifacts
 dev.db
+*_test.db
 shots/
+stake-ref/
+backups/
+BOT_GUIDE.md
+POKERIN_OPS.md

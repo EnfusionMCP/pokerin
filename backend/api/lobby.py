@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from ..schemas.lobby import TableInfo
+from ..ws.protocol import TableStateMessage
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ async def list_tables(request: Request):
     return table_manager.list_tables()
 
 
-@router.get("/tables/{table_id}")
+@router.get("/tables/{table_id}", response_model=TableStateMessage)
 async def get_table_state(table_id: str, request: Request):
     """Public table state for spectators — no hole cards."""
     table_manager = getattr(request.app.state, "table_manager", None)

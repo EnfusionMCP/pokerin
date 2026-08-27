@@ -16,9 +16,6 @@ class User(Base):
     character_name: Mapped[str] = mapped_column(String(255), nullable=False)
     portrait_url: Mapped[str] = mapped_column(String(512), default="")
 
-    # EVE SSO refresh token (encrypted at rest in production)
-    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-
     # ISK balance in fractional units (ISK x 100) — avoids floating point
     balance: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 

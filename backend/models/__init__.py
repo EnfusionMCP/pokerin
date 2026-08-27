@@ -3,9 +3,11 @@
 from .user import User, DepositCode, DeviceFingerprint
 from .ledger import Transaction, Withdrawal
 from .hand import Hand, HandPlayer, HandAction
+from .analytics import PageView
 
 __all__ = [
     "User", "DepositCode", "DeviceFingerprint",
     "Transaction", "Withdrawal",
     "Hand", "HandPlayer", "HandAction",
+    "PageView",
 ]

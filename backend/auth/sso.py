@@ -2,12 +2,15 @@
 
 import base64
 import hashlib
+import logging
 import secrets
 import time
 
 import httpx
 
 from ..config import settings
+
+log = logging.getLogger(__name__)
 
 SSO_AUTH_URL = f"{settings.eve_sso_base}/v2/oauth/authorize"
 SSO_TOKEN_URL = f"{settings.eve_sso_base}/v2/oauth/token"
@@ -18,6 +21,53 @@ SSO_TOKEN_URL = f"{settings.eve_sso_base}/v2/oauth/token"
 _pending_logins: dict[str, tuple[str, float]] = {}
 _LOGIN_EXPIRY = 600  # 10 minutes
 _MAX_PENDING = 5000  # cap to prevent DoS (rate limiter covers /auth/ at 20/min)
+
+
+class SSOFlowError(ValueError):
+    """A deliberately sanitized error safe to expose to an SSO caller."""
+
+
+async def _request_token(data: dict[str, str], operation: str) -> dict:
+    """Call the token endpoint without exposing credentials or response bodies."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                SSO_TOKEN_URL,
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+    except Exception:
+        # Exception text from an HTTP client can include request data. Keep the
+        # diagnostic deliberately stable and never chain the original error.
+        log.warning("EVE SSO %s request failed", operation)
+        raise SSOFlowError("EVE SSO token service is unavailable") from None
+
+    if response.status_code != 200:
+        log.warning(
+            "EVE SSO %s returned HTTP %d",
+            operation,
+            response.status_code,
+        )
+        raise SSOFlowError("EVE SSO rejected the token request")
+
+    try:
+        payload = response.json()
+    except Exception:
+        log.warning("EVE SSO %s returned an invalid token response", operation)
+        raise SSOFlowError("EVE SSO returned an invalid token response") from None
+
+    if not isinstance(payload, dict):
+        log.warning("EVE SSO %s returned a non-object token response", operation)
+        raise SSOFlowError("EVE SSO returned an invalid token response")
+    access_token = payload.get("access_token")
+    refresh_token = payload.get("refresh_token")
+    if not isinstance(access_token, str) or not access_token:
+        log.warning("EVE SSO %s response omitted its access token", operation)
+        raise SSOFlowError("EVE SSO returned an invalid token response")
+    if refresh_token is not None and not isinstance(refresh_token, str):
+        log.warning("EVE SSO %s response had an invalid refresh token", operation)
+        raise SSOFlowError("EVE SSO returned an invalid token response")
+    return payload
 
 
 def _cleanup_expired() -> None:
@@ -80,30 +130,25 @@ async def exchange_code(code: str, state: str) -> dict:
         Token response dict with access_token, refresh_token, expires_in.
 
     Raises:
-        ValueError: If state is unknown or token exchange fails.
+        SSOFlowError: If state is unknown or token exchange fails.
     """
     entry = _pending_logins.pop(state, None)
     if not entry:
-        raise ValueError("Unknown or expired login state")
+        raise SSOFlowError("Unknown or expired login state")
     verifier, created_at = entry
     if time.monotonic() - created_at > _LOGIN_EXPIRY:
-        raise ValueError("Login state expired")
+        raise SSOFlowError("Login state expired")
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(SSO_TOKEN_URL, data={
+    return await _request_token(
+        {
             "grant_type": "authorization_code",
             "code": code,
             "client_id": settings.eve_client_id,
             "redirect_uri": settings.eve_callback_url,
             "code_verifier": verifier,
-        }, headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-        })
-
-    if resp.status_code != 200:
-        raise ValueError(f"Token exchange failed ({resp.status_code}): {resp.text}")
-
-    return resp.json()
+        },
+        "token exchange",
+    )
 
 
 async def refresh_access_token(refresh_token: str) -> dict:
@@ -112,19 +157,14 @@ async def refresh_access_token(refresh_token: str) -> dict:
     Returns:
         Token response dict with new access_token, refresh_token, expires_in.
     """
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(SSO_TOKEN_URL, data={
+    return await _request_token(
+        {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": settings.eve_client_id,
-        }, headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-        })
-
-    if resp.status_code != 200:
-        raise ValueError(f"Token refresh failed ({resp.status_code}): {resp.text}")
-
-    return resp.json()
+        },
+        "token refresh",
+    )
 
 
 def parse_character_from_jwt(access_token: str) -> tuple[int, str]:
@@ -153,7 +193,7 @@ def parse_character_from_jwt(access_token: str) -> tuple[int, str]:
 
     # sub format: "CHARACTER:EVE:1234567890"
     if not sub.startswith("CHARACTER:EVE:"):
-        raise ValueError(f"Unexpected sub format: {sub}")
+        raise ValueError("Unexpected EVE token subject format")
 
     character_id = int(sub.split(":")[-1])
     return character_id, name

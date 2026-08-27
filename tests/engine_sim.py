@@ -512,7 +512,7 @@ async def test_reconnect_restores():
     await table.handle_disconnect(1)  # IDLE, not in hand → SITTING_OUT
     if table.seats[0].status != SeatStatus.SITTING_OUT:
         failures.append("reconnect setup: not SITTING_OUT after disconnect")
-    table.handle_reconnect(1)
+    await table.handle_reconnect(1)
     if table.seats[0].status != SeatStatus.WAITING:
         failures.append(f"reconnect: status not restored: {table.seats[0].status}")
     if table.seats[0].sit_out_hands != 0:
@@ -521,7 +521,7 @@ async def test_reconnect_restores():
     # A genuine AFK (auto_sitout) must stay sat out on reconnect.
     table.seats[1].status = SeatStatus.SITTING_OUT
     table._auto_sitout.add(2)
-    table.handle_reconnect(2)
+    await table.handle_reconnect(2)
     if table.seats[1].status != SeatStatus.SITTING_OUT:
         failures.append("reconnect: AFK player wrongly reactivated")
     return failures

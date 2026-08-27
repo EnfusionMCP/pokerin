@@ -4,12 +4,23 @@ sizing, with a 2-5s think delay. Seats 5 bots; leaves seat 0 for the human.
 Throwaway dev helper — not committed."""
 
 import asyncio, json, math, os, random
+
+from tests.db_safety import (
+    configure_mutating_test_database,
+    verify_configured_test_engine,
+    verify_connected_test_database,
+)
+
+_TEST_DATABASE_URL = configure_mutating_test_database()
+
 import websockets
 from phevaluator import evaluate_cards
 from sqlalchemy import select
 from backend.db import async_session, engine
 from backend.models.user import User
 from backend.auth.jwt import create_token
+
+verify_configured_test_engine(engine, _TEST_DATABASE_URL)
 
 WS = os.environ.get("WS_URL", "ws://127.0.0.1:8090/ws/table/micro-1")
 N = int(os.environ.get("N", "5"))
@@ -21,6 +32,7 @@ HIGH = {"A": 10, "K": 8, "Q": 7, "J": 6}
 
 async def ensure_users():
     async with async_session() as s:
+        await verify_connected_test_database(s, _TEST_DATABASE_URL)
         for i in range(N):
             uid = 10 + i
             u = (await s.execute(select(User).where(User.id == uid))).scalar_one_or_none()

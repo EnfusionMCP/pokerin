@@ -4,16 +4,31 @@ leave and reconnect and rebuy when short. While they play, a monitor verifies
 chip conservation at every hand boundary. Afterwards every persisted hand is
 audited for correct payouts.
 
-Run (server must be up on :8090, sqlite dev.db):
-    python tests/qa_live.py
+Run against the explicitly approved SQLite test file documented in
+tests/README.md (server must use that same file and be up on :8090):
+    python -m tests.qa_live
 """
 
 import asyncio, json, random, time, sqlite3, sys
+from pathlib import Path
+
+from tests.db_safety import (
+    configure_disposable_sqlite_test_database,
+    verify_configured_test_engine,
+    verify_connected_test_database,
+)
+
+_TEST_DATABASE_URL = configure_disposable_sqlite_test_database()
+
 import websockets
 from sqlalchemy import select
+from sqlalchemy.engine import make_url
 from backend.db import async_session, engine
 from backend.models.user import User
 from backend.auth.jwt import create_token
+
+verify_configured_test_engine(engine, _TEST_DATABASE_URL)
+SQLITE_TEST_PATH = Path(make_url(_TEST_DATABASE_URL).database or "").resolve()
 
 WS = "ws://127.0.0.1:8090/ws/table/micro-1"
 MIN_BUYIN = 400_000_000
@@ -26,6 +41,7 @@ STYLES = ["station", "tight", "aggro", "normal", "normal", "aggro", "station"]
 
 async def fund_players(n):
     async with async_session() as s:
+        await verify_connected_test_database(s, _TEST_DATABASE_URL)
         for i in range(n):
             uid = 20 + i
             u = (await s.execute(select(User).where(User.id == uid))).scalar_one_or_none()
@@ -106,7 +122,11 @@ async def monitor(stop, samples, leaks):
     def db():
         for _ in range(12):
             try:
-                c = sqlite3.connect('file:dev.db?mode=ro', uri=True, timeout=2)
+                c = sqlite3.connect(
+                    f"file:{SQLITE_TEST_PATH.as_posix()}?mode=ro",
+                    uri=True,
+                    timeout=2,
+                )
                 w = c.execute('select coalesce(sum(balance),0) from users').fetchone()[0]
                 r = c.execute("select coalesce(sum(amount),0) from transactions where type='rake'").fetchone()[0]
                 c.close(); return w, r
@@ -134,7 +154,11 @@ async def monitor(stop, samples, leaks):
 
 
 def audit_hands():
-    c = sqlite3.connect('file:dev.db?mode=ro', uri=True, timeout=5)
+    c = sqlite3.connect(
+        f"file:{SQLITE_TEST_PATH.as_posix()}?mode=ro",
+        uri=True,
+        timeout=5,
+    )
     hands = c.execute('select id,hand_number,pot_total,rake_taken from hands order by id').fetchall()
     bad = []
     for hid, hn, pot, rake in hands:
