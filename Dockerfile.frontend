@@ -1,4 +1,4 @@
-FROM node:24-alpine@sha256:705813e7dd798f8a69a2b0d8fb958ecafe5fc3b2a52139ae03a0379246301c4a AS frontend-build
+FROM node:26-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3 AS frontend-build
 
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./
